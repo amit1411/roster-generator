@@ -59,13 +59,16 @@ export default function ConfigPanel({ config, setConfig, players }) {
 
       <div className="grid grid-cols-2 gap-3 mb-5">
         {fields.map(({ key, label, min, max, hint }) => (
-          <div key={key} className="group relative">
-            <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+          <div key={key}>
+            <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
               {label}
-              <span className="text-gray-300 cursor-help" title={hint}>
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <span className="relative group">
+                <svg className="w-3.5 h-3.5 text-gray-400 hover:text-indigo-500 transition-colors cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
+                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 text-xs text-white bg-gray-800 rounded-md shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-20">
+                  {hint}
+                </span>
               </span>
             </label>
             <input
@@ -76,16 +79,18 @@ export default function ConfigPanel({ config, setConfig, players }) {
               onChange={(e) => update(key, parseInt(e.target.value) || min)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             />
-            <p className="text-[10px] text-gray-400 mt-0.5">{hint}</p>
           </div>
         ))}
         <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
-            Seed (optional)
-            <span className="text-gray-300 cursor-help" title="Set a number for reproducible results. Same seed = same roster. Leave empty for random.">
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
+            Seed
+            <span className="relative group">
+              <svg className="w-3.5 h-3.5 text-gray-400 hover:text-indigo-500 transition-colors cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
+              <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 text-xs text-white bg-gray-800 rounded-md shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-20">
+                Same seed = same roster. Leave empty for random.
+              </span>
             </span>
           </label>
           <input
@@ -95,7 +100,6 @@ export default function ConfigPanel({ config, setConfig, players }) {
             placeholder="Random"
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />
-          <p className="text-[10px] text-gray-400 mt-0.5">Same seed = same roster every time</p>
         </div>
       </div>
 
