@@ -44,11 +44,11 @@ export default function ConfigPanel({ config, setConfig, players }) {
   }
 
   const fields = [
-    { key: "num_courts", label: "Courts", min: 1, max: 20 },
-    { key: "rounds", label: "Rounds", min: 1, max: 30 },
-    { key: "pair_games", label: "Pair Games", min: 1, max: 15 },
-    { key: "pair_start_round", label: "Pair Start Round", min: 1, max: 30 },
-    { key: "max_consecutive_rest", label: "Max Consec. Rest", min: 1, max: 10 },
+    { key: "num_courts", label: "Courts", min: 1, max: 20, hint: "Number of courts available at the venue" },
+    { key: "rounds", label: "Rounds", min: 1, max: 30, hint: "Total number of game rounds to schedule" },
+    { key: "pair_games", label: "Pair Games", min: 1, max: 15, hint: "How many games each fixed pair plays together" },
+    { key: "pair_start_round", label: "Pair Start Round", min: 1, max: 30, hint: "Fixed pairs only play together from this round onwards" },
+    { key: "max_consecutive_rest", label: "Max Consec. Rest", min: 1, max: 10, hint: "Max rounds a player can sit out in a row" },
   ];
 
   const courtNumbers = config.court_numbers || [];
@@ -58,9 +58,16 @@ export default function ConfigPanel({ config, setConfig, players }) {
       <h2 className="text-lg font-semibold text-gray-800 mb-4">Settings</h2>
 
       <div className="grid grid-cols-2 gap-3 mb-5">
-        {fields.map(({ key, label, min, max }) => (
-          <div key={key}>
-            <label className="block text-xs font-medium text-gray-500 mb-1">{label}</label>
+        {fields.map(({ key, label, min, max, hint }) => (
+          <div key={key} className="group relative">
+            <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+              {label}
+              <span className="text-gray-300 cursor-help" title={hint}>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </span>
+            </label>
             <input
               type="number"
               min={min}
@@ -69,10 +76,18 @@ export default function ConfigPanel({ config, setConfig, players }) {
               onChange={(e) => update(key, parseInt(e.target.value) || min)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             />
+            <p className="text-[10px] text-gray-400 mt-0.5">{hint}</p>
           </div>
         ))}
         <div>
-          <label className="block text-xs font-medium text-gray-500 mb-1">Seed (optional)</label>
+          <label className="block text-xs font-medium text-gray-500 mb-1 flex items-center gap-1">
+            Seed (optional)
+            <span className="text-gray-300 cursor-help" title="Set a number for reproducible results. Same seed = same roster. Leave empty for random.">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </span>
+          </label>
           <input
             type="number"
             value={config.seed ?? ""}
@@ -80,6 +95,7 @@ export default function ConfigPanel({ config, setConfig, players }) {
             placeholder="Random"
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
           />
+          <p className="text-[10px] text-gray-400 mt-0.5">Same seed = same roster every time</p>
         </div>
       </div>
 
