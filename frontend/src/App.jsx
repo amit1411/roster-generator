@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import PlayerInput from "./components/PlayerInput";
 import ConfigPanel from "./components/ConfigPanel";
 import RosterTable from "./components/RosterTable";
@@ -37,7 +37,19 @@ export default function App() {
   });
   const [roster, setRoster] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState(null);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (loading) {
+      setElapsed(0);
+      timerRef.current = setInterval(() => setElapsed((s) => s + 1), 1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [loading]);
 
   async function handleGenerate() {
     setLoading(true);
@@ -57,6 +69,12 @@ export default function App() {
     }
   }
 
+  function loadingText() {
+    if (elapsed < 3) return "Generating...";
+    if (elapsed < 8) return `Generating... (${elapsed}s)`;
+    return `Waking up server... (${elapsed}s)`;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
@@ -70,9 +88,15 @@ export default function App() {
             <button
               onClick={handleGenerate}
               disabled={loading || players.length < 4}
-              className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center gap-2"
             >
-              {loading ? "Generating..." : "Generate Roster"}
+              {loading && (
+                <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              )}
+              {loading ? loadingText() : "Generate Roster"}
             </button>
           </div>
         </div>
@@ -96,7 +120,20 @@ export default function App() {
             <ConfigPanel config={config} setConfig={setConfig} players={players} />
           </div>
           <div className="lg:col-span-2">
-            {roster ? (
+            {loading ? (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+                <svg className="w-12 h-12 mx-auto mb-4 text-indigo-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <p className="text-gray-700 font-medium">{loadingText()}</p>
+                {elapsed >= 5 && (
+                  <p className="text-gray-400 text-sm mt-2">
+                    First request may take up to 30s while the server wakes up
+                  </p>
+                )}
+              </div>
+            ) : roster ? (
               <RosterTable data={roster} fixedPairs={fixedPairs} />
             ) : (
               <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
