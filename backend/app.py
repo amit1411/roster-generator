@@ -94,8 +94,10 @@ class SharedSessionResponse(BaseModel):
     draw_config: DrawConfig
     league_scores_by_round: list[list[dict[str, int | str]]]
     active_league_round: int
+    ended_league_rounds: list[bool]
     knockout_scores_by_round: list[list[dict[str, int | str]]]
     active_knockout_round: int
+    ended_knockout_rounds: list[bool]
     version: int
 
 
@@ -110,6 +112,11 @@ class ScoreUpdateRequest(BaseModel):
     court_index: int
     team_key: str
     value: int | None = None
+
+
+class RoundEndRequest(BaseModel):
+    stage: str
+    round_index: int
 
 
 def _create_empty_scores(rounds: list[RoundResult]) -> list[list[dict[str, int | str]]]:
@@ -130,8 +137,22 @@ def _ensure_score_slot(scores: list[list[dict[str, int | str]]], round_index: in
         scores[round_index].append({"teamA": "", "teamB": ""})
 
 
+def _upgrade_session_payload(payload: dict) -> dict:
+    league_round_count = len(payload.get("roster", {}).get("rounds", []))
+    payload.setdefault("league_scores_by_round", [[] for _ in range(league_round_count)])
+    payload.setdefault("active_league_round", -1)
+    payload.setdefault("ended_league_rounds", [False for _ in range(league_round_count)])
+    if len(payload["ended_league_rounds"]) < league_round_count:
+        payload["ended_league_rounds"].extend([False] * (league_round_count - len(payload["ended_league_rounds"])))
+
+    payload.setdefault("knockout_scores_by_round", [])
+    payload.setdefault("active_knockout_round", -1)
+    payload.setdefault("ended_knockout_rounds", [])
+    return payload
+
+
 def _serialize_session(record: SharedSessionRecord) -> SharedSessionResponse:
-    payload = deepcopy(record.data)
+    payload = _upgrade_session_payload(deepcopy(record.data))
     return SharedSessionResponse(
         session_id=record.session_id,
         version=record.version,
@@ -162,7 +183,7 @@ def _update_session_record(session_id: str, updater) -> SharedSessionResponse:
         if not record:
             raise HTTPException(status_code=404, detail="Shared session not found")
 
-        next_payload = deepcopy(record.data)
+        next_payload = _upgrade_session_payload(deepcopy(record.data))
         updater(next_payload)
         record.data = next_payload
         record.version += 1
@@ -231,8 +252,10 @@ def create_shared_session(req: SharedSessionCreateRequest):
         "draw_config": req.draw_config.model_dump(),
         "league_scores_by_round": _create_empty_scores(req.roster.rounds),
         "active_league_round": -1,
+        "ended_league_rounds": [False for _ in req.roster.rounds],
         "knockout_scores_by_round": [],
         "active_knockout_round": -1,
+        "ended_knockout_rounds": [],
     }
 
     with get_db_session() as db:
@@ -270,6 +293,8 @@ def start_round(session_id: str, req: RoundStartRequest):
             current_round = payload["active_league_round"]
             if req.round_index != current_round + 1:
                 raise HTTPException(status_code=409, detail="Round must be started in sequence")
+            if req.round_index >= len(payload["league_scores_by_round"]):
+                raise HTTPException(status_code=400, detail="Invalid round index")
             payload["active_league_round"] = req.round_index
             return
 
@@ -279,7 +304,47 @@ def start_round(session_id: str, req: RoundStartRequest):
         current_round = payload["active_knockout_round"]
         if req.round_index != current_round + 1:
             raise HTTPException(status_code=409, detail="Round must be started in sequence")
+        _ensure_score_slot(payload["knockout_scores_by_round"], req.round_index, 0)
+        while len(payload["ended_knockout_rounds"]) <= req.round_index:
+            payload["ended_knockout_rounds"].append(False)
         payload["active_knockout_round"] = req.round_index
+
+    return _update_session_record(session_id, updater)
+
+
+@app.post("/api/sessions/{session_id}/end-round", response_model=SharedSessionResponse)
+def end_round(session_id: str, req: RoundEndRequest):
+    def updater(payload: dict):
+        if req.stage == "league":
+            if req.round_index < 0 or req.round_index > payload["active_league_round"]:
+                raise HTTPException(status_code=409, detail="Round must be started before it can be ended")
+            if payload["ended_league_rounds"][req.round_index]:
+                raise HTTPException(status_code=409, detail="Round has already been ended")
+
+            round_scores = payload["league_scores_by_round"][req.round_index]
+            if not all(score["teamA"] != "" and score["teamB"] != "" for score in round_scores):
+                raise HTTPException(status_code=409, detail="Enter all scores before ending the round")
+
+            payload["ended_league_rounds"][req.round_index] = True
+            return
+
+        if req.stage != "knockout":
+            raise HTTPException(status_code=400, detail="Invalid stage")
+
+        if req.round_index < 0 or req.round_index > payload["active_knockout_round"]:
+            raise HTTPException(status_code=409, detail="Round must be started before it can be ended")
+
+        _ensure_score_slot(payload["knockout_scores_by_round"], req.round_index, 0)
+        while len(payload["ended_knockout_rounds"]) <= req.round_index:
+            payload["ended_knockout_rounds"].append(False)
+        if payload["ended_knockout_rounds"][req.round_index]:
+            raise HTTPException(status_code=409, detail="Round has already been ended")
+
+        round_scores = payload["knockout_scores_by_round"][req.round_index]
+        if not all(score["teamA"] != "" and score["teamB"] != "" for score in round_scores):
+            raise HTTPException(status_code=409, detail="Enter all scores before ending the round")
+
+        payload["ended_knockout_rounds"][req.round_index] = True
 
     return _update_session_record(session_id, updater)
 
@@ -291,17 +356,23 @@ def update_score(session_id: str, req: ScoreUpdateRequest):
 
     def updater(payload: dict):
         scores_key = "league_scores_by_round" if req.stage == "league" else "knockout_scores_by_round"
+        ended_key = "ended_league_rounds" if req.stage == "league" else "ended_knockout_rounds"
         if req.stage not in {"league", "knockout"}:
             raise HTTPException(status_code=400, detail="Invalid stage")
 
         try:
             if req.stage == "knockout":
                 _ensure_score_slot(payload[scores_key], req.round_index, req.court_index)
+                while len(payload[ended_key]) <= req.round_index:
+                    payload[ended_key].append(False)
 
             round_scores = payload[scores_key][req.round_index]
             court_score = round_scores[req.court_index]
         except (IndexError, KeyError, TypeError):
             raise HTTPException(status_code=400, detail="Invalid round or court index")
+
+        if payload[ended_key][req.round_index]:
+            raise HTTPException(status_code=409, detail="Round is locked after being ended")
 
         court_score[req.team_key] = "" if req.value is None else req.value
 

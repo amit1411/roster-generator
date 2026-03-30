@@ -130,6 +130,26 @@ export function areRoundsComplete(rounds, scoresByRound) {
   );
 }
 
+export function filterScoresByEndedRounds(rounds, scoresByRound, endedRounds = []) {
+  return rounds.map((round, roundIndex) => {
+    if (!endedRounds[roundIndex]) {
+      return round.courts.map(() => createEmptyScore());
+    }
+
+    return round.courts.map((_, courtIndex) => scoresByRound[roundIndex]?.[courtIndex] || createEmptyScore());
+  });
+}
+
+export function areEndedRoundsComplete(rounds, scoresByRound, endedRounds = []) {
+  return rounds.every((round, roundIndex) => {
+    if (!endedRounds[roundIndex]) {
+      return false;
+    }
+
+    return round.courts.every((_, courtIndex) => isScoreComplete(scoresByRound[roundIndex]?.[courtIndex]));
+  });
+}
+
 function createKnockoutRound(label, round, matches) {
   return {
     id: label.toLowerCase().replace(/\s+/g, "-"),
@@ -140,11 +160,21 @@ function createKnockoutRound(label, round, matches) {
   };
 }
 
-export function buildKnockoutRounds(drawConfig, roster, leagueScoresByRound, knockoutScoresByRound) {
+export function buildKnockoutRounds(
+  drawConfig,
+  roster,
+  leagueScoresByRound,
+  knockoutScoresByRound,
+  endedLeagueRounds = [],
+  endedKnockoutRounds = []
+) {
   if (drawConfig?.draw_type !== "league_knockout") return [];
-  if (!areRoundsComplete(roster.rounds, leagueScoresByRound)) return [];
+  if (!areEndedRoundsComplete(roster.rounds, leagueScoresByRound, endedLeagueRounds)) return [];
 
-  const pairStandings = buildPairStandings(roster.rounds, leagueScoresByRound);
+  const pairStandings = buildPairStandings(
+    roster.rounds,
+    filterScoresByEndedRounds(roster.rounds, leagueScoresByRound, endedLeagueRounds)
+  );
   const qualifierCount = Math.min(drawConfig.knockout_qualifiers || 4, pairStandings.length);
   if (qualifierCount < 2) return [];
 
@@ -163,7 +193,7 @@ export function buildKnockoutRounds(drawConfig, roster, leagueScoresByRound, kno
   const rounds = [semifinalRound];
   const semifinalScores = knockoutScoresByRound[0] || [];
   const semifinalWinners = semifinalRound.courts.map((court, courtIndex) =>
-    getMatchWinner(semifinalScores[courtIndex], court)
+    endedKnockoutRounds[0] ? getMatchWinner(semifinalScores[courtIndex], court) : null
   );
 
   if (semifinalWinners.every(Boolean)) {

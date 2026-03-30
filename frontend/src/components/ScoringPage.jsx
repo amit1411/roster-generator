@@ -1,23 +1,21 @@
 import {
-  areRoundsComplete,
+  areEndedRoundsComplete,
   buildIndividualStandings,
   buildKnockoutRounds,
   buildPairStandings,
   createScoresForRounds,
+  filterScoresByEndedRounds,
   getMatchWinner,
   isScoreComplete,
 } from "../scoring";
 
-function getRoundStatus(roundIndex, activeRound, roundScores) {
-  if (roundIndex < activeRound) {
-    const completed = roundScores.every(isScoreComplete);
-    return completed ? "completed" : "in-progress";
+function getRoundStatus(roundIndex, activeRound, endedRounds) {
+  if (endedRounds[roundIndex]) {
+    return "completed";
   }
-
-  if (roundIndex === activeRound) {
-    return "active";
+  if (roundIndex <= activeRound) {
+    return "live";
   }
-
   return "pending";
 }
 
@@ -28,15 +26,13 @@ function formatPointDifference(value) {
 function StatusBadge({ status }) {
   const styles = {
     completed: "bg-green-100 text-green-700 border-green-200",
-    "in-progress": "bg-amber-100 text-amber-700 border-amber-200",
-    active: "bg-indigo-100 text-indigo-700 border-indigo-200",
+    live: "bg-indigo-100 text-indigo-700 border-indigo-200",
     pending: "bg-gray-100 text-gray-600 border-gray-200",
   };
 
   const labels = {
     completed: "Completed",
-    "in-progress": "In Progress",
-    active: "Active",
+    live: "Live",
     pending: "Pending",
   };
 
@@ -118,8 +114,10 @@ function RoundList({
   rounds,
   scoresByRound,
   activeRound,
+  endedRounds,
   stage,
   onStartRound,
+  onEndRound,
   onScoreChange,
   onScoreCommit,
 }) {
@@ -134,14 +132,17 @@ function RoundList({
 
       {rounds.map((round, roundIndex) => {
         const roundScores = scoresByRound[roundIndex] || createScoresForRounds([round])[0];
-        const status = getRoundStatus(roundIndex, activeRound, roundScores);
+        const status = getRoundStatus(roundIndex, activeRound, endedRounds);
         const canStart = roundIndex === activeRound + 1;
+        const isEnded = endedRounds[roundIndex];
+        const isLive = status === "live";
+        const canEnd = isLive && roundScores.every(isScoreComplete);
 
         return (
           <section
             key={`${stage}-${round.id || round.round}`}
             className={`overflow-hidden rounded-2xl border bg-white shadow-sm transition-colors ${
-              status === "active" ? "border-indigo-200" : "border-gray-200"
+              status === "live" ? "border-indigo-200" : "border-gray-200"
             }`}
           >
             <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
@@ -156,11 +157,13 @@ function RoundList({
                 </p>
               </div>
               <button
-                onClick={() => onStartRound(stage, roundIndex)}
-                disabled={!canStart}
-                className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                onClick={() => (isLive ? onEndRound(stage, roundIndex) : onStartRound(stage, roundIndex))}
+                disabled={isLive ? !canEnd : !canStart || isEnded}
+                className={`inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 ${
+                  isLive ? "bg-rose-600 hover:bg-rose-700" : "bg-indigo-600 hover:bg-indigo-700"
+                }`}
               >
-                {status === "active" ? "Round Live" : status === "pending" ? "Start Round" : "Round Started"}
+                {isEnded ? "Round Ended" : isLive ? "End Round" : "Start Round"}
               </button>
             </div>
 
@@ -168,7 +171,7 @@ function RoundList({
               {round.courts.map((court, courtIndex) => {
                 const score = roundScores[courtIndex];
                 const winner = getMatchWinner(score, court);
-                const inputsEnabled = roundIndex <= activeRound;
+                const inputsEnabled = roundIndex <= activeRound && !isEnded;
 
                 return (
                   <div key={courtIndex} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -237,10 +240,13 @@ export default function ScoringPage({
   sessionName,
   leagueScoresByRound,
   activeLeagueRound,
+  endedLeagueRounds,
   knockoutScoresByRound,
   activeKnockoutRound,
+  endedKnockoutRounds,
   onBack,
   onStartRound,
+  onEndRound,
   onScoreChange,
   onScoreCommit,
 }) {
@@ -250,14 +256,21 @@ export default function ScoringPage({
     court_numbers: roster.court_numbers,
   }));
 
-  const individualStandings = buildIndividualStandings(roster.rounds, leagueScoresByRound);
-  const pairStandings = buildPairStandings(roster.rounds, leagueScoresByRound);
-  const knockoutRounds = buildKnockoutRounds(drawConfig, roster, leagueScoresByRound, knockoutScoresByRound);
-  const leagueComplete = areRoundsComplete(roster.rounds, leagueScoresByRound);
+  const endedLeagueScores = filterScoresByEndedRounds(roster.rounds, leagueScoresByRound, endedLeagueRounds);
+  const individualStandings = buildIndividualStandings(roster.rounds, endedLeagueScores);
+  const pairStandings = buildPairStandings(roster.rounds, endedLeagueScores);
+  const knockoutRounds = buildKnockoutRounds(
+    drawConfig,
+    roster,
+    leagueScoresByRound,
+    knockoutScoresByRound,
+    endedLeagueRounds,
+    endedKnockoutRounds
+  );
+  const leagueComplete = areEndedRoundsComplete(roster.rounds, leagueScoresByRound, endedLeagueRounds);
   const totalRounds = leagueRounds.length + knockoutRounds.length;
   const completedRounds =
-    leagueRounds.filter((_, roundIndex) => (leagueScoresByRound[roundIndex] || []).every(isScoreComplete)).length +
-    knockoutRounds.filter((_, roundIndex) => (knockoutScoresByRound[roundIndex] || []).every(isScoreComplete)).length;
+    endedLeagueRounds.filter(Boolean).length + endedKnockoutRounds.slice(0, knockoutRounds.length).filter(Boolean).length;
 
   const nextLeagueRound =
     activeLeagueRound + 1 < leagueRounds.length ? leagueRounds[activeLeagueRound + 1].label : null;
@@ -275,7 +288,7 @@ export default function ScoringPage({
               {drawConfig?.draw_type === "league_knockout" ? "Run league play and playoffs" : "Run the session round by round"}
             </h2>
             <p className="mt-2 max-w-2xl text-sm text-indigo-50">
-              Start each round when you are ready, then enter scores court by court. When league play is complete, playoff rounds are seeded automatically from the pair table.
+              Start each round when you are ready, enter scores court by court, and end the round to lock results and refresh the rankings. When league play is complete, playoff rounds are seeded automatically from the pair table.
             </p>
             <p className="mt-3 inline-flex rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold tracking-wide text-white">
               Session {sessionName}
@@ -284,7 +297,7 @@ export default function ScoringPage({
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <div className="rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm">
               <p className="text-indigo-100">Progress</p>
-              <p className="font-semibold text-white">{completedRounds} / {totalRounds} rounds scored</p>
+              <p className="font-semibold text-white">{completedRounds} / {totalRounds} rounds ended</p>
             </div>
             <button
               onClick={onBack}
@@ -303,8 +316,10 @@ export default function ScoringPage({
             rounds={leagueRounds}
             scoresByRound={leagueScoresByRound}
             activeRound={activeLeagueRound}
+            endedRounds={endedLeagueRounds}
             stage="league"
             onStartRound={onStartRound}
+            onEndRound={onEndRound}
             onScoreChange={onScoreChange}
             onScoreCommit={onScoreCommit}
           />
@@ -316,7 +331,7 @@ export default function ScoringPage({
                 <h3 className="mt-1 text-lg font-semibold">
                   {leagueComplete
                     ? "League table locked. Knockout rounds are now seeded from the pair rankings."
-                    : "Finish all league rounds to unlock the knockout bracket."}
+                    : "End each league round to refresh the table and unlock the knockout bracket."}
                 </h3>
               </div>
 
@@ -326,8 +341,10 @@ export default function ScoringPage({
                   rounds={knockoutRounds}
                   scoresByRound={knockoutScoresByRound}
                   activeRound={activeKnockoutRound}
+                  endedRounds={endedKnockoutRounds}
                   stage="knockout"
                   onStartRound={onStartRound}
+                  onEndRound={onEndRound}
                   onScoreChange={onScoreChange}
                   onScoreCommit={onScoreCommit}
                 />
@@ -336,7 +353,7 @@ export default function ScoringPage({
                   <p className="text-sm text-gray-600">
                     {leagueComplete
                       ? "Not enough ranked pairs are available to seed the configured playoff bracket yet."
-                      : "The knockout bracket will appear here after the league stage is fully scored."}
+                      : "The knockout bracket will appear here after the league stage is fully ended."}
                   </p>
                 </div>
               )}
@@ -348,7 +365,7 @@ export default function ScoringPage({
           <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Round Control</h3>
             <p className="mt-3 text-sm text-gray-600">
-              League rounds unlock one by one. If your format includes playoffs, those rounds appear automatically after league scoring is complete.
+              League rounds unlock one by one. Rankings update only after you end the active round. If your format includes playoffs, those rounds appear automatically after league play is ended.
             </p>
             <div className="mt-4 rounded-xl bg-gray-50 p-4">
               <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Next round to start</p>
@@ -358,14 +375,14 @@ export default function ScoringPage({
 
           <RankingTable
             title="Individual Rankings"
-            emptyText="Individual rankings will appear once league scores are entered."
+            emptyText="Individual rankings will appear once an ended league round is available."
             label="Player"
             standings={individualStandings}
           />
 
           <RankingTable
             title="Pair Rankings"
-            emptyText="Pair rankings will appear only after a pair has completed a scored league match together."
+            emptyText="Pair rankings will appear only after a pair has completed a match in an ended league round."
             label="Pair"
             standings={pairStandings}
           />

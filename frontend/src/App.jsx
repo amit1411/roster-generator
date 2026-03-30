@@ -6,6 +6,7 @@ import DownloadCSV from "./components/DownloadCSV";
 import ScoringPage from "./components/ScoringPage";
 import {
   createSharedSession,
+  endSharedRound,
   fetchSharedSession,
   generateRoster,
   startSharedRound,
@@ -143,8 +144,18 @@ function normalizeSession(session) {
     drawConfig,
     leagueScoresByRound,
     activeLeagueRound: session.activeLeagueRound ?? session.active_league_round ?? session.activeRound ?? -1,
+    endedLeagueRounds: Array.isArray(session.endedLeagueRounds)
+      ? session.endedLeagueRounds
+      : Array.isArray(session.ended_league_rounds)
+        ? session.ended_league_rounds
+        : roster.rounds.map(() => false),
     knockoutScoresByRound,
     activeKnockoutRound: session.activeKnockoutRound ?? session.active_knockout_round ?? -1,
+    endedKnockoutRounds: Array.isArray(session.endedKnockoutRounds)
+      ? session.endedKnockoutRounds
+      : Array.isArray(session.ended_knockout_rounds)
+        ? session.ended_knockout_rounds
+        : [],
     version: session.version || 1,
   };
 
@@ -152,7 +163,9 @@ function normalizeSession(session) {
     normalized.drawConfig,
     normalized.roster,
     normalized.leagueScoresByRound,
-    normalized.knockoutScoresByRound
+    normalized.knockoutScoresByRound,
+    normalized.endedLeagueRounds,
+    normalized.endedKnockoutRounds
   );
 
   return {
@@ -168,6 +181,34 @@ function normalizeSession(session) {
         ? knockoutRounds.length - 1
         : normalized.activeKnockoutRound,
   };
+}
+
+function getScoreSyncKey(stage, roundIndex, courtIndex, teamKey) {
+  return `${stage}:${roundIndex}:${courtIndex}:${teamKey}`;
+}
+
+function mergePendingScoreEdits(session, pendingEdits) {
+  if (!session) return session;
+
+  let nextSession = session;
+  Object.values(pendingEdits).forEach((edit) => {
+    const scoresKey = edit.stage === "league" ? "leagueScoresByRound" : "knockoutScoresByRound";
+    if (!nextSession[scoresKey]?.[edit.roundIndex]?.[edit.courtIndex]) return;
+
+    nextSession = normalizeSession({
+      ...nextSession,
+      [scoresKey]: nextSession[scoresKey].map((roundScores, currentRoundIndex) => {
+        if (currentRoundIndex !== edit.roundIndex) return roundScores;
+
+        return roundScores.map((courtScore, currentCourtIndex) => {
+          if (currentCourtIndex !== edit.courtIndex) return courtScore;
+          return { ...courtScore, [edit.teamKey]: edit.rawValue };
+        });
+      }),
+    });
+  });
+
+  return nextSession;
 }
 
 export default function App() {
@@ -188,6 +229,7 @@ export default function App() {
   const [shareFeedback, setShareFeedback] = useState("");
   const timerRef = useRef(null);
   const scoreSyncTimeoutsRef = useRef({});
+  const pendingScoreEditsRef = useRef({});
 
   useEffect(() => {
     if (loading) {
@@ -222,7 +264,7 @@ export default function App() {
     setSessionLoading(true);
     fetchSharedSession(urlSessionId)
       .then((session) => {
-        const normalized = normalizeSession(session);
+        const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
         setCurrentSession(normalized);
         setRoster(normalized.roster);
         setView("scoring");
@@ -239,7 +281,10 @@ export default function App() {
 
     const intervalId = window.setInterval(async () => {
       try {
-        const latest = normalizeSession(await fetchSharedSession(currentSession.sessionId));
+        const latest = mergePendingScoreEdits(
+          normalizeSession(await fetchSharedSession(currentSession.sessionId)),
+          pendingScoreEditsRef.current
+        );
         if (latest.version !== currentSession.version) {
           setCurrentSession(latest);
           setRoster(latest.roster);
@@ -301,7 +346,7 @@ export default function App() {
           knockout_qualifiers: config.knockout_qualifiers,
         },
       });
-      const normalized = normalizeSession(session);
+      const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
       setCurrentSession(normalized);
       setSessionIdInUrl(normalized.sessionId);
       setView("scoring");
@@ -318,7 +363,10 @@ export default function App() {
     setSessionLoading(true);
     setError(null);
     try {
-      const latest = normalizeSession(await fetchSharedSession(currentSession.sessionId));
+      const latest = mergePendingScoreEdits(
+        normalizeSession(await fetchSharedSession(currentSession.sessionId)),
+        pendingScoreEditsRef.current
+      );
       setCurrentSession(latest);
       setRoster(latest.roster);
       setSessionIdInUrl(latest.sessionId);
@@ -356,7 +404,24 @@ export default function App() {
         stage,
         round_index: roundIndex,
       });
-      const normalized = normalizeSession(updated);
+      const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
+      setCurrentSession(normalized);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function handleEndRound(stage, roundIndex) {
+    if (!currentSession?.sessionId) return;
+
+    try {
+      await flushRoundScoreEdits(currentSession.sessionId, stage, roundIndex);
+      const updated = await endSharedRound(currentSession.sessionId, {
+        stage,
+        round_index: roundIndex,
+      });
+      const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
       setCurrentSession(normalized);
       setError(null);
     } catch (e) {
@@ -383,6 +448,8 @@ export default function App() {
   }
 
   async function pushScoreUpdate(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue) {
+    const syncKey = getScoreSyncKey(stage, roundIndex, courtIndex, teamKey);
+
     try {
       const updated = await updateSharedScore(sessionId, {
         stage,
@@ -391,7 +458,11 @@ export default function App() {
         team_key: teamKey,
         value: rawValue === "" ? null : Math.max(0, Number.parseInt(rawValue, 10) || 0),
       });
-      const normalized = normalizeSession(updated);
+      if (pendingScoreEditsRef.current[syncKey]?.rawValue === rawValue) {
+        delete pendingScoreEditsRef.current[syncKey];
+      }
+
+      const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
       setCurrentSession(normalized);
       setError(null);
     } catch (e) {
@@ -399,8 +470,24 @@ export default function App() {
     }
   }
 
-  function getScoreSyncKey(stage, roundIndex, courtIndex, teamKey) {
-    return `${stage}:${roundIndex}:${courtIndex}:${teamKey}`;
+  async function flushRoundScoreEdits(sessionId, stage, roundIndex) {
+    const pendingEntries = Object.entries(pendingScoreEditsRef.current).filter(([, edit]) =>
+      edit.stage === stage && edit.roundIndex === roundIndex
+    );
+
+    pendingEntries.forEach(([syncKey]) => {
+      const existingTimeout = scoreSyncTimeoutsRef.current[syncKey];
+      if (existingTimeout) {
+        window.clearTimeout(existingTimeout);
+        delete scoreSyncTimeoutsRef.current[syncKey];
+      }
+    });
+
+    await Promise.all(
+      pendingEntries.map(([, edit]) =>
+        pushScoreUpdate(sessionId, stage, roundIndex, edit.courtIndex, edit.teamKey, edit.rawValue)
+      )
+    );
   }
 
   function scheduleScoreSync(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue, immediate = false) {
@@ -425,6 +512,13 @@ export default function App() {
   function handleScoreChange(stage, roundIndex, courtIndex, teamKey, rawValue) {
     if (!currentSession?.sessionId) return;
 
+    pendingScoreEditsRef.current[getScoreSyncKey(stage, roundIndex, courtIndex, teamKey)] = {
+      stage,
+      roundIndex,
+      courtIndex,
+      teamKey,
+      rawValue,
+    };
     setCurrentSession((current) =>
       applyLocalScoreChange(current, stage, roundIndex, courtIndex, teamKey, rawValue)
     );
@@ -601,16 +695,19 @@ export default function App() {
           <ScoringPage
             roster={currentSession.roster}
             drawConfig={currentSession.drawConfig}
-            sessionName={currentSession.name}
-            leagueScoresByRound={currentSession.leagueScoresByRound}
-            activeLeagueRound={currentSession.activeLeagueRound}
-            knockoutScoresByRound={currentSession.knockoutScoresByRound}
-            activeKnockoutRound={currentSession.activeKnockoutRound}
-            onBack={handleBackToPlanner}
-            onStartRound={handleStartRound}
-            onScoreChange={handleScoreChange}
-            onScoreCommit={handleScoreCommit}
-          />
+                sessionName={currentSession.name}
+                leagueScoresByRound={currentSession.leagueScoresByRound}
+                activeLeagueRound={currentSession.activeLeagueRound}
+                endedLeagueRounds={currentSession.endedLeagueRounds}
+                knockoutScoresByRound={currentSession.knockoutScoresByRound}
+                activeKnockoutRound={currentSession.activeKnockoutRound}
+                endedKnockoutRounds={currentSession.endedKnockoutRounds}
+                onBack={handleBackToPlanner}
+                onStartRound={handleStartRound}
+                onEndRound={handleEndRound}
+                onScoreChange={handleScoreChange}
+                onScoreCommit={handleScoreCommit}
+              />
         ) : null}
       </main>
     </div>
