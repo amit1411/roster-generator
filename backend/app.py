@@ -176,10 +176,19 @@ def _serialize_session(record: SharedSessionRecord) -> SharedSessionResponse:
     )
 
 
-def _planned_knockout_rounds(draw_config: dict) -> int:
+def _count_league_pairs(payload: dict) -> int:
+    pairs = set()
+    for round_data in payload.get("roster", {}).get("rounds", []):
+        for court in round_data.get("courts", []):
+            pairs.add(" & ".join(court.get("team_a", [])))
+            pairs.add(" & ".join(court.get("team_b", [])))
+    return len([pair for pair in pairs if pair])
+
+
+def _planned_knockout_rounds(draw_config: dict, pair_count: int) -> int:
     if draw_config.get("draw_type") != "league_knockout":
         return 0
-    qualifiers = draw_config.get("knockout_qualifiers", 4)
+    qualifiers = min(draw_config.get("knockout_qualifiers", 4), pair_count)
     if qualifiers >= 4:
         return 2
     if qualifiers >= 2:
@@ -191,7 +200,7 @@ def _serialize_session_summary(record: SharedSessionRecord) -> SharedSessionSumm
     payload = _upgrade_session_payload(deepcopy(record.data))
     draw_config = payload.get("draw_config", {})
     league_total = len(payload.get("roster", {}).get("rounds", []))
-    knockout_total = _planned_knockout_rounds(draw_config)
+    knockout_total = _planned_knockout_rounds(draw_config, _count_league_pairs(payload))
     total_rounds = league_total + knockout_total
     ended_rounds = sum(1 for ended in payload.get("ended_league_rounds", []) if ended) + sum(
         1 for ended in payload.get("ended_knockout_rounds", []) if ended
