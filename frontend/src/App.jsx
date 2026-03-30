@@ -734,144 +734,150 @@ export default function App() {
         )}
 
         {view === "planner" ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-            <div className="lg:col-span-1 space-y-6">
-              <PlayerInput
-                players={players}
-                setPlayers={setPlayers}
-                fixedPairs={fixedPairs}
-                setFixedPairs={setFixedPairs}
-              />
-              <ConfigPanel
-                config={config}
-                setConfig={setConfig}
-                players={players}
-                fixedPairs={fixedPairs}
-              />
-            </div>
-            <div className="lg:col-span-2">
-              {loading ? (
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
-                  <svg className="w-12 h-12 mx-auto mb-4 text-indigo-500 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  <p className="text-gray-700 font-medium">{loadingText()}</p>
-                  {elapsed >= 5 && (
-                    <p className="text-gray-400 text-sm mt-2">
-                      First request may take up to 30s while the server wakes up
+          <div className="space-y-8">
+            <section className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-600 via-indigo-500 to-sky-500 p-5 text-white shadow-sm sm:p-6">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                <div>
+                  <p className="text-sm font-medium text-indigo-100">Create New Session</p>
+                  <h2 className="mt-1 text-2xl font-bold">Build the next badminton draw in a clear step-by-step flow</h2>
+                  <p className="mt-2 max-w-3xl text-sm text-indigo-50">
+                    Set players and format first, generate the roster when it looks right, then lock it into a shared scoring session.
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-100">Step 1</p>
+                    <p className="mt-1 text-sm font-semibold text-white">Players & Format</p>
+                  </div>
+                  <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-100">Step 2</p>
+                    <p className="mt-1 text-sm font-semibold text-white">Generate & Review</p>
+                  </div>
+                  <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-100">Step 3</p>
+                    <p className="mt-1 text-sm font-semibold text-white">Start Session</p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(320px,1fr)_minmax(0,1.55fr)]">
+              <div className="space-y-6 xl:sticky xl:top-24 xl:self-start">
+                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <div className="mb-4">
+                    <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Step 1</p>
+                    <h3 className="mt-1 text-lg font-semibold text-gray-900">Configure the draw</h3>
+                    <p className="mt-2 text-sm text-gray-600">
+                      Keep this column focused on setup. Once the roster is generated, the review panel on the right becomes the next step.
                     </p>
-                  )}
+                  </div>
+                  <div className="space-y-6">
+                    <PlayerInput
+                      players={players}
+                      setPlayers={setPlayers}
+                      fixedPairs={fixedPairs}
+                      setFixedPairs={setFixedPairs}
+                    />
+                    <ConfigPanel
+                      config={config}
+                      setConfig={setConfig}
+                      players={players}
+                      fixedPairs={fixedPairs}
+                    />
+                  </div>
                 </div>
-              ) : roster ? (
-                <div className="space-y-4">
-                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                      <div>
-                        <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Sessions</p>
-                        <h2 className="mt-1 text-lg font-semibold text-gray-900">Manage ongoing games without leaving the planner</h2>
-                        <p className="mt-2 text-sm text-gray-600">
-                          Open an existing session, copy its share link, or remove it if you no longer need it.
-                        </p>
-                      </div>
-                      <button
-                        onClick={loadSessions}
-                        disabled={sessionsLoading}
-                        className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
-                      >
-                        {sessionsLoading ? "Refreshing..." : "Refresh Sessions"}
-                      </button>
-                    </div>
-                    <div className="mt-4 space-y-3">
-                      {sessions.length > 0 ? (
-                        sessions.map((session) => (
-                          <SessionCard
-                            key={session.sessionId}
-                            session={session}
-                            isCurrent={session.sessionId === currentSession?.sessionId}
-                            feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback.text : ""}
-                            onOpen={openSession}
-                            onCopy={handleCopyShareLink}
-                            onDelete={handleDeleteSession}
-                          />
-                        ))
-                      ) : (
-                        <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
-                          No sessions yet. Lock a roster to create your first shared scoring session.
+              </div>
+
+              <div>
+                {loading ? (
+                  <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-12 text-center">
+                    <svg className="w-12 h-12 mx-auto mb-4 text-indigo-500 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <p className="text-gray-700 font-medium">{loadingText()}</p>
+                    {elapsed >= 5 && (
+                      <p className="text-gray-400 text-sm mt-2">
+                        First request may take up to 30s while the server wakes up
+                      </p>
+                    )}
+                  </div>
+                ) : roster ? (
+                  <div className="space-y-4">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-slate-200">Step 2</p>
+                          <h3 className="mt-1 text-lg font-semibold">Generated roster is ready to review</h3>
+                          <p className="mt-2 text-sm text-slate-300">
+                            Review the schedule below. If everything looks good, lock it into a shared session.
+                          </p>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
-                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-slate-200">Roster Ready</p>
-                        <h2 className="mt-1 text-lg font-semibold">Lock this draw into a shared scoring session.</h2>
+                        <button
+                          onClick={handleLockRoster}
+                          disabled={sessionLoading}
+                          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:opacity-60"
+                        >
+                          {sessionLoading ? "Creating Session..." : "Step 3: Lock Roster and Start Session"}
+                        </button>
                       </div>
-                      <button
-                        onClick={handleLockRoster}
-                        disabled={sessionLoading}
-                        className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:opacity-60"
-                      >
-                        {sessionLoading ? "Creating Session..." : "Lock Roster and Start Session"}
-                      </button>
                     </div>
+                    <RosterTable data={roster} fixedPairs={fixedPairs} />
                   </div>
-                  <RosterTable data={roster} fixedPairs={fixedPairs} />
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                      <div>
-                        <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Sessions</p>
-                        <h2 className="mt-1 text-lg font-semibold text-gray-900">Pick up where you left off</h2>
-                        <p className="mt-2 text-sm text-gray-600">
-                          Shared sessions stay here even if you refresh, switch devices, or come back later.
-                        </p>
-                      </div>
-                      <button
-                        onClick={loadSessions}
-                        disabled={sessionsLoading}
-                        className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
-                      >
-                        {sessionsLoading ? "Refreshing..." : "Refresh Sessions"}
-                      </button>
-                    </div>
-                    <div className="mt-4 space-y-3">
-                      {sessions.length > 0 ? (
-                        sessions.map((session) => (
-                          <SessionCard
-                            key={session.sessionId}
-                            session={session}
-                            isCurrent={session.sessionId === currentSession?.sessionId}
-                            feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback.text : ""}
-                            onOpen={openSession}
-                            onCopy={handleCopyShareLink}
-                            onDelete={handleDeleteSession}
-                          />
-                        ))
-                      ) : (
-                        <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
-                          No shared sessions yet. Generate a roster and lock it to start one.
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-12 text-center shadow-sm">
                     <div className="text-gray-300 mb-4">
                       <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                       </svg>
                     </div>
-                    <p className="text-gray-500 font-medium">No roster generated yet</p>
+                    <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Step 2</p>
+                    <p className="mt-2 text-gray-700 font-medium">Generate a roster to review it here</p>
                     <p className="text-gray-400 text-sm mt-1">
-                      Configure players and settings, then click "Generate Roster"
+                      This panel stays focused on the output, so creation and management do not compete for attention.
                     </p>
                   </div>
+                )}
+              </div>
+            </section>
+
+            <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Existing Sessions</p>
+                  <h2 className="mt-1 text-lg font-semibold text-gray-900">Resume, share, or clean up saved sessions</h2>
+                  <p className="mt-2 text-sm text-gray-600">
+                    Session management stays below the creation flow so it is available when needed without crowding the generator.
+                  </p>
                 </div>
-              )}
-            </div>
+                <button
+                  onClick={loadSessions}
+                  disabled={sessionsLoading}
+                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+                >
+                  {sessionsLoading ? "Refreshing..." : "Refresh Sessions"}
+                </button>
+              </div>
+              <div className="mt-4 space-y-3">
+                {sessions.length > 0 ? (
+                  sessions.map((session) => (
+                    <SessionCard
+                      key={session.sessionId}
+                      session={session}
+                      isCurrent={session.sessionId === currentSession?.sessionId}
+                      feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback.text : ""}
+                      onOpen={openSession}
+                      onCopy={handleCopyShareLink}
+                      onDelete={handleDeleteSession}
+                    />
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
+                    No shared sessions yet. Generate and lock a roster to create your first one.
+                  </div>
+                )}
+              </div>
+            </section>
           </div>
         ) : currentSession ? (
           <ScoringPage
