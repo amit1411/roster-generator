@@ -25,13 +25,58 @@ export default function RosterTable({ data, fixedPairs }) {
       )}
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+        <div className="px-4 py-3 sm:px-5 border-b border-gray-100 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
           <h2 className="text-lg font-semibold text-gray-800">Roster</h2>
           <span className="text-sm text-gray-500">
             {rounds.length} rounds &middot; {rounds[0]?.courts.length} courts
           </span>
         </div>
-        <div className="overflow-x-auto">
+        <div className="block lg:hidden p-4 space-y-4">
+          {rounds.map((round) => (
+            <div key={round.round} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-base font-semibold text-gray-900">Round {round.round}</h3>
+                <span className="text-xs font-medium text-gray-500">
+                  {round.courts.length} courts
+                </span>
+              </div>
+
+              <div className="mt-3 space-y-3">
+                {round.courts.map((court, ci) => {
+                  const pairA = isFixedPairTeam(court.team_a);
+                  const pairB = isFixedPairTeam(court.team_b);
+
+                  return (
+                    <div key={`${round.round}-${ci}`} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+                      <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-gray-500">
+                        <span>Court {court_numbers?.[ci] ?? ci + 1}</span>
+                        {pairA || pairB ? <span className="text-indigo-600">Fixed Pair Match</span> : null}
+                      </div>
+
+                      <div className="mt-3 space-y-2">
+                        <div className={`rounded-lg px-3 py-2 text-sm ${pairA ? "bg-indigo-50 text-indigo-700 font-semibold" : "bg-gray-50 text-gray-800"}`}>
+                          {court.team_a.join(" & ")}
+                        </div>
+                        <div className={`rounded-lg px-3 py-2 text-sm ${pairB ? "bg-indigo-50 text-indigo-700 font-semibold" : "bg-gray-50 text-gray-800"}`}>
+                          {court.team_b.join(" & ")}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {round.resting.length > 0 && (
+                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Resting</p>
+                  <p className="mt-1 text-sm text-amber-900">{round.resting.join(", ")}</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        <div className="hidden lg:block overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wide">
@@ -88,7 +133,7 @@ export default function RosterTable({ data, fixedPairs }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
           <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
             Rest Distribution
@@ -99,9 +144,9 @@ export default function RosterTable({ data, fixedPairs }) {
               .map(([player, rested]) => {
                 const played = rounds.length - rested;
                 return (
-                  <div key={player} className="flex items-center justify-between text-sm">
-                    <span className="text-gray-700">{player}</span>
-                    <div className="flex gap-3 text-xs">
+                  <div key={player} className="flex items-start justify-between gap-3 text-sm">
+                    <span className="text-gray-700 break-words">{player}</span>
+                    <div className="flex shrink-0 gap-3 text-xs">
                       <span className="text-green-600 font-medium">Played {played}</span>
                       <span className="text-gray-400">Rested {rested}</span>
                     </div>
@@ -121,9 +166,9 @@ export default function RosterTable({ data, fixedPairs }) {
                 {Object.entries(fixed_pair_counts)
                   .sort(([a], [b]) => a.localeCompare(b))
                   .map(([pair, count]) => (
-                    <div key={pair} className="flex items-center justify-between text-sm">
-                      <span className="text-gray-700">{pair}</span>
-                      <span className="font-medium text-indigo-600">{count} games</span>
+                    <div key={pair} className="flex items-start justify-between gap-3 text-sm">
+                      <span className="text-gray-700 break-words">{pair}</span>
+                      <span className="shrink-0 font-medium text-indigo-600">{count} games</span>
                     </div>
                   ))}
               </div>

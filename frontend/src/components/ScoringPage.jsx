@@ -52,7 +52,35 @@ function RankingTable({ title, emptyText, label, standings }) {
     <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
       <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">{title}</h3>
       {standings.length > 0 ? (
-        <div className="mt-4 overflow-hidden rounded-xl border border-gray-200">
+        <div className="mt-4 space-y-3 md:hidden">
+          {standings.map(([name, stats]) => (
+            <div key={name} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-sm font-semibold text-gray-900 break-words">{name}</p>
+                <span className="shrink-0 rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                  {stats.points} pts
+                </span>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                <div className="rounded-lg bg-white px-2 py-2">
+                  <p className="text-gray-400">Wins</p>
+                  <p className="mt-1 font-semibold text-green-700">{stats.wins}</p>
+                </div>
+                <div className="rounded-lg bg-white px-2 py-2">
+                  <p className="text-gray-400">Losses</p>
+                  <p className="mt-1 font-semibold text-rose-600">{stats.losses}</p>
+                </div>
+                <div className="rounded-lg bg-white px-2 py-2">
+                  <p className="text-gray-400">Diff</p>
+                  <p className="mt-1 font-semibold text-gray-700">{formatPointDifference(stats.pointDifference)}</p>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      {standings.length > 0 ? (
+        <div className="mt-4 hidden overflow-hidden rounded-xl border border-gray-200 md:block">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
               <tr>
@@ -98,7 +126,7 @@ function RoundList({
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
         <h3 className="text-base font-semibold text-gray-900">{title}</h3>
         <p className="text-sm text-gray-500">{rounds.length} round{rounds.length > 1 ? "s" : ""}</p>
       </div>
@@ -115,7 +143,7 @@ function RoundList({
               status === "active" ? "border-indigo-200" : "border-gray-200"
             }`}
           >
-            <div className="flex flex-col gap-3 border-b border-gray-100 px-5 py-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-col gap-3 border-b border-gray-100 px-4 py-4 sm:px-5 md:flex-row md:items-center md:justify-between">
               <div>
                 <div className="flex items-center gap-3">
                   <h4 className="text-lg font-semibold text-gray-900">{round.label || `Round ${round.round}`}</h4>
@@ -129,13 +157,13 @@ function RoundList({
               <button
                 onClick={() => onStartRound(stage, roundIndex)}
                 disabled={!canStart}
-                className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
               >
                 {status === "active" ? "Round Live" : status === "pending" ? "Start Round" : "Round Started"}
               </button>
             </div>
 
-            <div className="space-y-4 p-5">
+            <div className="space-y-4 p-4 sm:p-5">
               {round.courts.map((court, courtIndex) => {
                 const score = roundScores[courtIndex];
                 const winner = getMatchWinner(score, court);
@@ -143,7 +171,7 @@ function RoundList({
 
                 return (
                   <div key={courtIndex} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
                       <div className="space-y-3">
                         <div>
                           <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
@@ -163,7 +191,7 @@ function RoundList({
                         )}
                       </div>
 
-                      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3">
+                      <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-3 sm:max-w-xs">
                         <label className="text-xs font-medium uppercase tracking-wide text-gray-500">
                           Team A
                           <input
@@ -172,10 +200,10 @@ function RoundList({
                             value={score.teamA}
                             disabled={!inputsEnabled}
                             onChange={(event) => onScoreChange(stage, roundIndex, courtIndex, "teamA", event.target.value)}
-                            className="mt-1 block w-24 rounded-lg border border-gray-300 bg-white px-3 py-2 text-base font-semibold text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:bg-gray-100"
+                            className="mt-1 block w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-3 text-center text-lg font-semibold text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:bg-gray-100"
                           />
                         </label>
-                        <span className="pt-5 text-sm font-semibold text-gray-400">vs</span>
+                        <span className="pb-3 text-center text-sm font-semibold text-gray-400">vs</span>
                         <label className="text-xs font-medium uppercase tracking-wide text-gray-500">
                           Team B
                           <input
@@ -184,7 +212,7 @@ function RoundList({
                             value={score.teamB}
                             disabled={!inputsEnabled}
                             onChange={(event) => onScoreChange(stage, roundIndex, courtIndex, "teamB", event.target.value)}
-                            className="mt-1 block w-24 rounded-lg border border-gray-300 bg-white px-3 py-2 text-base font-semibold text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:bg-gray-100"
+                            className="mt-1 block w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-3 text-center text-lg font-semibold text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:bg-gray-100"
                           />
                         </label>
                       </div>
@@ -235,11 +263,11 @@ export default function ScoringPage({
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-600 via-indigo-500 to-sky-500 p-6 text-white shadow-sm">
+      <div className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-600 via-indigo-500 to-sky-500 p-4 text-white shadow-sm sm:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <p className="text-sm font-medium text-indigo-100">Scoring Console</p>
-            <h2 className="mt-1 text-2xl font-bold">
+            <h2 className="mt-1 text-xl font-bold sm:text-2xl">
               {drawConfig?.draw_type === "league_knockout" ? "Run league play and playoffs" : "Run the session round by round"}
             </h2>
             <p className="mt-2 max-w-2xl text-sm text-indigo-50">
@@ -249,14 +277,14 @@ export default function ScoringPage({
               Session {sessionName}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <div className="rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm">
               <p className="text-indigo-100">Progress</p>
               <p className="font-semibold text-white">{completedRounds} / {totalRounds} rounds scored</p>
             </div>
             <button
               onClick={onBack}
-              className="inline-flex items-center rounded-lg border border-white/25 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/20"
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-white/25 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/20"
             >
               Back to Roster
             </button>
