@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 from copy import deepcopy
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
@@ -90,6 +90,8 @@ class SharedSessionCreateRequest(BaseModel):
 class SharedSessionResponse(BaseModel):
     session_id: str
     name: str
+    created_at: str
+    updated_at: str
     roster: RosterResponse
     draw_config: DrawConfig
     league_scores_by_round: list[list[dict[str, int | str]]]
@@ -99,6 +101,18 @@ class SharedSessionResponse(BaseModel):
     active_knockout_round: int
     ended_knockout_rounds: list[bool]
     version: int
+
+
+class SharedSessionSummary(BaseModel):
+    session_id: str
+    name: str
+    created_at: str
+    updated_at: str
+    draw_type: str
+    status: str
+    ended_rounds: int
+    total_rounds: int
+    live_rounds: int
 
 
 class RoundStartRequest(BaseModel):
@@ -155,8 +169,53 @@ def _serialize_session(record: SharedSessionRecord) -> SharedSessionResponse:
     payload = _upgrade_session_payload(deepcopy(record.data))
     return SharedSessionResponse(
         session_id=record.session_id,
+        created_at=record.created_at.isoformat(),
+        updated_at=record.updated_at.isoformat(),
         version=record.version,
         **payload,
+    )
+
+
+def _planned_knockout_rounds(draw_config: dict) -> int:
+    if draw_config.get("draw_type") != "league_knockout":
+        return 0
+    qualifiers = draw_config.get("knockout_qualifiers", 4)
+    if qualifiers >= 4:
+        return 2
+    if qualifiers >= 2:
+        return 1
+    return 0
+
+
+def _serialize_session_summary(record: SharedSessionRecord) -> SharedSessionSummary:
+    payload = _upgrade_session_payload(deepcopy(record.data))
+    draw_config = payload.get("draw_config", {})
+    league_total = len(payload.get("roster", {}).get("rounds", []))
+    knockout_total = _planned_knockout_rounds(draw_config)
+    total_rounds = league_total + knockout_total
+    ended_rounds = sum(1 for ended in payload.get("ended_league_rounds", []) if ended) + sum(
+        1 for ended in payload.get("ended_knockout_rounds", []) if ended
+    )
+    live_rounds = max(0, payload.get("active_league_round", -1) + 1 - sum(payload.get("ended_league_rounds", [])))
+    live_rounds += max(0, payload.get("active_knockout_round", -1) + 1 - sum(payload.get("ended_knockout_rounds", [])))
+
+    if ended_rounds >= total_rounds and total_rounds > 0:
+        status = "completed"
+    elif payload.get("active_league_round", -1) >= 0 or payload.get("active_knockout_round", -1) >= 0:
+        status = "in_progress"
+    else:
+        status = "ready"
+
+    return SharedSessionSummary(
+        session_id=record.session_id,
+        name=record.name,
+        created_at=record.created_at.isoformat(),
+        updated_at=record.updated_at.isoformat(),
+        draw_type=draw_config.get("draw_type", "round_robin"),
+        status=status,
+        ended_rounds=ended_rounds,
+        total_rounds=total_rounds,
+        live_rounds=live_rounds,
     )
 
 
@@ -284,6 +343,29 @@ def create_shared_session(req: SharedSessionCreateRequest):
 def get_shared_session(session_id: str):
     record = _get_session_record(session_id)
     return _serialize_session(record)
+
+
+@app.get("/api/sessions", response_model=list[SharedSessionSummary])
+def list_shared_sessions():
+    with get_db_session() as db:
+        records = db.scalars(
+            select(SharedSessionRecord).order_by(SharedSessionRecord.updated_at.desc())
+        ).all()
+        for record in records:
+            db.expunge(record)
+        return [_serialize_session_summary(record) for record in records]
+
+
+@app.delete("/api/sessions/{session_id}", status_code=204)
+def delete_shared_session(session_id: str):
+    with get_db_session() as db:
+        record = db.scalar(
+            select(SharedSessionRecord).where(SharedSessionRecord.session_id == session_id)
+        )
+        if not record:
+            raise HTTPException(status_code=404, detail="Shared session not found")
+        db.delete(record)
+    return Response(status_code=204)
 
 
 @app.post("/api/sessions/{session_id}/start-round", response_model=SharedSessionResponse)

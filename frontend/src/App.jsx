@@ -6,9 +6,11 @@ import DownloadCSV from "./components/DownloadCSV";
 import ScoringPage from "./components/ScoringPage";
 import {
   createSharedSession,
+  deleteSharedSession,
   endSharedRound,
   fetchSharedSession,
   generateRoster,
+  listSharedSessions,
   startSharedRound,
   updateSharedScore,
 } from "./api";
@@ -117,6 +119,48 @@ function buildShareUrl(sessionId) {
   return url.toString();
 }
 
+function formatSessionTime(value) {
+  if (!value) return "Just now";
+
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return "Just now";
+  }
+}
+
+function normalizeSessionSummary(session) {
+  if (!session?.session_id && !session?.sessionId) return null;
+
+  return {
+    sessionId: session.sessionId || session.session_id,
+    name: session.name || createSessionName(),
+    createdAt: session.createdAt || session.created_at || null,
+    updatedAt: session.updatedAt || session.updated_at || null,
+    drawType: session.drawType || session.draw_type || "round_robin",
+    status: session.status || "ready",
+    endedRounds: session.endedRounds ?? session.ended_rounds ?? 0,
+    totalRounds: session.totalRounds ?? session.total_rounds ?? 0,
+    liveRounds: session.liveRounds ?? session.live_rounds ?? 0,
+  };
+}
+
+function formatDrawType(drawType) {
+  return drawType === "league_knockout" ? "League + Knockout" : "Round Robin";
+}
+
+function formatSessionStatus(session) {
+  if (session.status === "completed") return "Completed";
+  if (session.liveRounds > 0) return `${session.liveRounds} round${session.liveRounds > 1 ? "s" : ""} live`;
+  if (session.status === "in_progress") return "In Progress";
+  return "Ready";
+}
+
 function normalizeSession(session) {
   if (!session?.roster?.rounds) return null;
 
@@ -211,6 +255,63 @@ function mergePendingScoreEdits(session, pendingEdits) {
   return nextSession;
 }
 
+function SessionCard({ session, isCurrent, feedback, onOpen, onCopy, onDelete }) {
+  const statusTone =
+    session.status === "completed"
+      ? "bg-emerald-100 text-emerald-700"
+      : session.liveRounds > 0
+        ? "bg-amber-100 text-amber-700"
+        : "bg-slate-100 text-slate-700";
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-base font-semibold text-gray-900">{session.name}</h3>
+            {isCurrent ? (
+              <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-semibold text-indigo-700">
+                Current
+              </span>
+            ) : null}
+            <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone}`}>
+              {formatSessionStatus(session)}
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-gray-600">{formatDrawType(session.drawType)}</p>
+          <p className="mt-2 text-sm text-gray-500">
+            {session.endedRounds} / {session.totalRounds || "?"} rounds ended
+          </p>
+          <p className="mt-1 text-xs text-gray-400">Updated {formatSessionTime(session.updatedAt)}</p>
+        </div>
+
+        <div className="flex flex-col gap-2 sm:w-auto sm:min-w-[220px]">
+          <button
+            onClick={() => onOpen(session.sessionId)}
+            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
+          >
+            Open Session
+          </button>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={() => onCopy(session.sessionId)}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+            >
+              {feedback || "Copy Link"}
+            </button>
+            <button
+              onClick={() => onDelete(session.sessionId)}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const plannerState = readStorage(PLANNER_STORAGE_KEY, null);
   const savedSession = readStorage(SESSION_STORAGE_KEY, null);
@@ -226,7 +327,9 @@ export default function App() {
   const [currentSession, setCurrentSession] = useState(normalizeSession(savedSession));
   const [view, setView] = useState(initialView);
   const [sessionLoading, setSessionLoading] = useState(false);
-  const [shareFeedback, setShareFeedback] = useState("");
+  const [sessions, setSessions] = useState([]);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [shareFeedback, setShareFeedback] = useState({ sessionId: null, text: "" });
   const timerRef = useRef(null);
   const scoreSyncTimeoutsRef = useRef({});
   const pendingScoreEditsRef = useRef({});
@@ -255,6 +358,16 @@ export default function App() {
 
   useEffect(() => {
     writeStorage(VIEW_STORAGE_KEY, view);
+  }, [view]);
+
+  useEffect(() => {
+    loadSessions();
+  }, []);
+
+  useEffect(() => {
+    if (view === "planner") {
+      loadSessions();
+    }
   }, [view]);
 
   useEffect(() => {
@@ -331,6 +444,18 @@ export default function App() {
     return `Waking up server... (${elapsed}s)`;
   }
 
+  async function loadSessions() {
+    setSessionsLoading(true);
+    try {
+      const list = await listSharedSessions();
+      setSessions(list.map(normalizeSessionSummary).filter(Boolean));
+    } catch (e) {
+      setError((currentError) => currentError || e.message);
+    } finally {
+      setSessionsLoading(false);
+    }
+  }
+
   async function handleLockRoster() {
     if (!roster) return;
 
@@ -350,6 +475,7 @@ export default function App() {
       setCurrentSession(normalized);
       setSessionIdInUrl(normalized.sessionId);
       setView("scoring");
+      await loadSessions();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -357,20 +483,19 @@ export default function App() {
     }
   }
 
-  async function handleResumeSession() {
-    if (!currentSession?.sessionId) return;
-
+  async function openSession(sessionId) {
     setSessionLoading(true);
     setError(null);
     try {
       const latest = mergePendingScoreEdits(
-        normalizeSession(await fetchSharedSession(currentSession.sessionId)),
+        normalizeSession(await fetchSharedSession(sessionId)),
         pendingScoreEditsRef.current
       );
       setCurrentSession(latest);
       setRoster(latest.roster);
       setSessionIdInUrl(latest.sessionId);
       setView("scoring");
+      await loadSessions();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -382,17 +507,42 @@ export default function App() {
     setView("planner");
   }
 
-  async function handleCopyShareLink() {
-    if (!currentSession?.sessionId) return;
+  async function handleCopyShareLink(sessionId) {
+    if (!sessionId) return;
 
-    const shareUrl = buildShareUrl(currentSession.sessionId);
+    const shareUrl = buildShareUrl(sessionId);
     try {
       await navigator.clipboard.writeText(shareUrl);
-      setShareFeedback("Link copied");
-      window.setTimeout(() => setShareFeedback(""), 2000);
+      setShareFeedback({ sessionId, text: "Copied" });
+      window.setTimeout(() => setShareFeedback({ sessionId: null, text: "" }), 2000);
     } catch {
-      setShareFeedback("Copy failed");
-      window.setTimeout(() => setShareFeedback(""), 2000);
+      setShareFeedback({ sessionId, text: "Failed" });
+      window.setTimeout(() => setShareFeedback({ sessionId: null, text: "" }), 2000);
+    }
+  }
+
+  async function handleDeleteSession(sessionId) {
+    if (!sessionId) return;
+    const target = sessions.find((session) => session.sessionId === sessionId);
+    const shouldDelete = window.confirm(
+      `Delete ${target?.name || "this session"}? This removes the locked roster and all saved scores.`
+    );
+    if (!shouldDelete) return;
+
+    setSessionLoading(true);
+    setError(null);
+    try {
+      await deleteSharedSession(sessionId);
+      setSessions((current) => current.filter((session) => session.sessionId !== sessionId));
+      if (currentSession?.sessionId === sessionId) {
+        setCurrentSession(null);
+        setSessionIdInUrl(null);
+        setView("planner");
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSessionLoading(false);
     }
   }
 
@@ -531,7 +681,6 @@ export default function App() {
   }
 
   const downloadData = currentSession?.roster || roster;
-  const sessionShareUrl = currentSession?.sessionId ? buildShareUrl(currentSession.sessionId) : "";
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -545,22 +694,6 @@ export default function App() {
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             {downloadData && <DownloadCSV data={downloadData} />}
-            {currentSession?.sessionId && (
-              <button
-                onClick={handleCopyShareLink}
-                className="w-full sm:w-auto px-5 py-2.5 bg-white text-gray-700 text-sm font-semibold rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
-              >
-                {shareFeedback || "Copy Share Link"}
-              </button>
-            )}
-            {view === "planner" && currentSession?.sessionId && (
-              <button
-                onClick={handleResumeSession}
-                className="w-full sm:w-auto px-5 py-2.5 bg-white text-gray-700 text-sm font-semibold rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
-              >
-                Resume {currentSession.name}
-              </button>
-            )}
             {view === "planner" ? (
               <button
                 onClick={handleGenerate}
@@ -632,6 +765,43 @@ export default function App() {
                 </div>
               ) : roster ? (
                 <div className="space-y-4">
+                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Sessions</p>
+                        <h2 className="mt-1 text-lg font-semibold text-gray-900">Manage ongoing games without leaving the planner</h2>
+                        <p className="mt-2 text-sm text-gray-600">
+                          Open an existing session, copy its share link, or remove it if you no longer need it.
+                        </p>
+                      </div>
+                      <button
+                        onClick={loadSessions}
+                        disabled={sessionsLoading}
+                        className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+                      >
+                        {sessionsLoading ? "Refreshing..." : "Refresh Sessions"}
+                      </button>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      {sessions.length > 0 ? (
+                        sessions.map((session) => (
+                          <SessionCard
+                            key={session.sessionId}
+                            session={session}
+                            isCurrent={session.sessionId === currentSession?.sessionId}
+                            feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback.text : ""}
+                            onOpen={openSession}
+                            onCopy={handleCopyShareLink}
+                            onDelete={handleDeleteSession}
+                          />
+                        ))
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
+                          No sessions yet. Lock a roster to create your first shared scoring session.
+                        </div>
+                      )}
+                    </div>
+                  </div>
                   <div className="rounded-xl border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <div>
@@ -647,46 +817,58 @@ export default function App() {
                       </button>
                     </div>
                   </div>
-                  {currentSession?.sessionId && (
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div>
-                          <p className="text-sm font-semibold text-emerald-800">Shared Session: {currentSession.name}</p>
-                          <p className="text-sm text-emerald-700">
-                            Share this session across devices so others can score from their own phones.
-                          </p>
-                          <p className="mt-1 text-xs text-emerald-700 break-all">{sessionShareUrl}</p>
-                        </div>
-                        <div className="flex flex-col gap-2 sm:flex-row">
-                          <button
-                            onClick={handleCopyShareLink}
-                            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-emerald-300 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-100"
-                          >
-                            {shareFeedback || "Copy Link"}
-                          </button>
-                          <button
-                            onClick={handleResumeSession}
-                            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-emerald-300 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-100"
-                          >
-                            Continue Session
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
                   <RosterTable data={roster} fixedPairs={fixedPairs} />
                 </div>
               ) : (
-                <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
-                  <div className="text-gray-300 mb-4">
-                    <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                    </svg>
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                      <div>
+                        <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Sessions</p>
+                        <h2 className="mt-1 text-lg font-semibold text-gray-900">Pick up where you left off</h2>
+                        <p className="mt-2 text-sm text-gray-600">
+                          Shared sessions stay here even if you refresh, switch devices, or come back later.
+                        </p>
+                      </div>
+                      <button
+                        onClick={loadSessions}
+                        disabled={sessionsLoading}
+                        className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+                      >
+                        {sessionsLoading ? "Refreshing..." : "Refresh Sessions"}
+                      </button>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      {sessions.length > 0 ? (
+                        sessions.map((session) => (
+                          <SessionCard
+                            key={session.sessionId}
+                            session={session}
+                            isCurrent={session.sessionId === currentSession?.sessionId}
+                            feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback.text : ""}
+                            onOpen={openSession}
+                            onCopy={handleCopyShareLink}
+                            onDelete={handleDeleteSession}
+                          />
+                        ))
+                      ) : (
+                        <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
+                          No shared sessions yet. Generate a roster and lock it to start one.
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-gray-500 font-medium">No roster generated yet</p>
-                  <p className="text-gray-400 text-sm mt-1">
-                    Configure players and settings, then click "Generate Roster"
-                  </p>
+                  <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
+                    <div className="text-gray-300 mb-4">
+                      <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                      </svg>
+                    </div>
+                    <p className="text-gray-500 font-medium">No roster generated yet</p>
+                    <p className="text-gray-400 text-sm mt-1">
+                      Configure players and settings, then click "Generate Roster"
+                    </p>
+                  </div>
                 </div>
               )}
             </div>

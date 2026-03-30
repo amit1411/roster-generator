@@ -39,6 +39,22 @@ export async function fetchSharedSession(sessionId) {
   return readJson(res);
 }
 
+export async function listSharedSessions() {
+  const res = await fetch(`${API_BASE}/api/sessions`);
+  return readJson(res);
+}
+
+export async function deleteSharedSession(sessionId) {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
+    method: "DELETE",
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Server error" }));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+}
+
 export async function startSharedRound(sessionId, payload) {
   const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/start-round`, {
     method: "POST",
