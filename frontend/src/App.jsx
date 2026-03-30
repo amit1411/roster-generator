@@ -1,10 +1,16 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import PlayerInput from "./components/PlayerInput";
 import ConfigPanel from "./components/ConfigPanel";
 import RosterTable from "./components/RosterTable";
 import DownloadCSV from "./components/DownloadCSV";
 import ScoringPage from "./components/ScoringPage";
-import { generateRoster } from "./api";
+import {
+  createSharedSession,
+  fetchSharedSession,
+  generateRoster,
+  startSharedRound,
+  updateSharedScore,
+} from "./api";
 import { buildKnockoutRounds, createScoresForRounds } from "./scoring";
 
 const DEFAULT_PLAYERS = [
@@ -27,6 +33,7 @@ const DEFAULT_PAIRS = [
 const PLANNER_STORAGE_KEY = "badminton-roster:planner";
 const SESSION_STORAGE_KEY = "badminton-roster:session";
 const VIEW_STORAGE_KEY = "badminton-roster:view";
+const SESSION_POLL_INTERVAL_MS = 5000;
 
 const DEFAULT_CONFIG = {
   num_courts: 5,
@@ -84,42 +91,60 @@ function getLeagueRequestPayload(players, fixedPairs, config) {
   };
 }
 
-function createLockedSession(roster, drawConfig) {
-  const sessionId = `session-${Date.now()}`;
+function getSessionIdFromUrl() {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("session");
+}
 
-  return {
-    id: sessionId,
-    name: createSessionName(),
-    createdAt: new Date().toISOString(),
-    roster,
-    drawConfig,
-    leagueScoresByRound: createScoresForRounds(roster.rounds),
-    activeLeagueRound: -1,
-    knockoutScoresByRound: [],
-    activeKnockoutRound: -1,
-  };
+function setSessionIdInUrl(sessionId) {
+  if (typeof window === "undefined") return;
+
+  const url = new URL(window.location.href);
+  if (sessionId) {
+    url.searchParams.set("session", sessionId);
+  } else {
+    url.searchParams.delete("session");
+  }
+  window.history.replaceState({}, "", url);
+}
+
+function buildShareUrl(sessionId) {
+  if (typeof window === "undefined" || !sessionId) return "";
+  const url = new URL(window.location.href);
+  url.searchParams.set("session", sessionId);
+  return url.toString();
 }
 
 function normalizeSession(session) {
   if (!session?.roster?.rounds) return null;
 
-  const drawConfig = normalizeConfig(session.drawConfig || {});
+  const drawConfig = normalizeConfig(session.drawConfig || session.draw_config || {});
+  const roster = session.roster;
   const leagueScoresByRound = Array.isArray(session.leagueScoresByRound)
     ? session.leagueScoresByRound
-    : Array.isArray(session.scoresByRound)
-      ? session.scoresByRound
-      : createScoresForRounds(session.roster.rounds);
+    : Array.isArray(session.league_scores_by_round)
+      ? session.league_scores_by_round
+      : Array.isArray(session.scoresByRound)
+        ? session.scoresByRound
+        : createScoresForRounds(roster.rounds);
+
+  const knockoutScoresByRound = Array.isArray(session.knockoutScoresByRound)
+    ? session.knockoutScoresByRound
+    : Array.isArray(session.knockout_scores_by_round)
+      ? session.knockout_scores_by_round
+      : [];
 
   const normalized = {
-    id: session.id || `session-${Date.now()}`,
+    sessionId: session.sessionId || session.session_id || null,
     name: session.name || createSessionName(),
-    createdAt: session.createdAt || new Date().toISOString(),
-    roster: session.roster,
+    createdAt: session.createdAt || session.created_at || new Date().toISOString(),
+    roster,
     drawConfig,
     leagueScoresByRound,
-    activeLeagueRound: session.activeLeagueRound ?? session.activeRound ?? -1,
-    knockoutScoresByRound: Array.isArray(session.knockoutScoresByRound) ? session.knockoutScoresByRound : [],
-    activeKnockoutRound: session.activeKnockoutRound ?? -1,
+    activeLeagueRound: session.activeLeagueRound ?? session.active_league_round ?? session.activeRound ?? -1,
+    knockoutScoresByRound,
+    activeKnockoutRound: session.activeKnockoutRound ?? session.active_knockout_round ?? -1,
+    version: session.version || 1,
   };
 
   const knockoutRounds = buildKnockoutRounds(
@@ -144,10 +169,6 @@ function normalizeSession(session) {
   };
 }
 
-function syncSessionState(session) {
-  return normalizeSession(session);
-}
-
 export default function App() {
   const plannerState = readStorage(PLANNER_STORAGE_KEY, null);
   const savedSession = readStorage(SESSION_STORAGE_KEY, null);
@@ -161,7 +182,9 @@ export default function App() {
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState(null);
   const [currentSession, setCurrentSession] = useState(normalizeSession(savedSession));
-  const [view, setView] = useState(initialView === "scoring" && savedSession ? "scoring" : "planner");
+  const [view, setView] = useState(initialView);
+  const [sessionLoading, setSessionLoading] = useState(false);
+  const [shareFeedback, setShareFeedback] = useState("");
   const timerRef = useRef(null);
 
   useEffect(() => {
@@ -180,7 +203,7 @@ export default function App() {
 
   useEffect(() => {
     if (currentSession) {
-      writeStorage(SESSION_STORAGE_KEY, syncSessionState(currentSession));
+      writeStorage(SESSION_STORAGE_KEY, currentSession);
     } else if (typeof window !== "undefined") {
       window.localStorage.removeItem(SESSION_STORAGE_KEY);
     }
@@ -191,10 +214,47 @@ export default function App() {
   }, [view]);
 
   useEffect(() => {
-    if (view === "scoring" && !currentSession) {
+    const urlSessionId = getSessionIdFromUrl();
+    if (!urlSessionId) return;
+
+    setSessionLoading(true);
+    fetchSharedSession(urlSessionId)
+      .then((session) => {
+        const normalized = normalizeSession(session);
+        setCurrentSession(normalized);
+        setRoster(normalized.roster);
+        setView("scoring");
+        setError(null);
+      })
+      .catch((err) => {
+        setError(err.message);
+      })
+      .finally(() => setSessionLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (!currentSession?.sessionId) return;
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const latest = normalizeSession(await fetchSharedSession(currentSession.sessionId));
+        if (latest.version !== currentSession.version) {
+          setCurrentSession(latest);
+          setRoster(latest.roster);
+        }
+      } catch {
+        // Keep current local state if polling fails; next successful poll will resync.
+      }
+    }, SESSION_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [currentSession?.sessionId, currentSession?.version]);
+
+  useEffect(() => {
+    if (view === "scoring" && !currentSession && !sessionLoading) {
       setView("planner");
     }
-  }, [view, currentSession]);
+  }, [view, currentSession, sessionLoading]);
 
   async function handleGenerate() {
     setLoading(true);
@@ -217,72 +277,107 @@ export default function App() {
     return `Waking up server... (${elapsed}s)`;
   }
 
-  function handleLockRoster() {
+  async function handleLockRoster() {
     if (!roster) return;
-    setCurrentSession(createLockedSession(roster, {
-      draw_type: config.draw_type,
-      league_meetings: config.league_meetings,
-      knockout_qualifiers: config.knockout_qualifiers,
-    }));
-    setView("scoring");
+
+    setSessionLoading(true);
+    setError(null);
+    try {
+      const session = await createSharedSession({
+        name: createSessionName(),
+        roster,
+        draw_config: {
+          draw_type: config.draw_type,
+          league_meetings: config.league_meetings,
+          knockout_qualifiers: config.knockout_qualifiers,
+        },
+      });
+      const normalized = normalizeSession(session);
+      setCurrentSession(normalized);
+      setSessionIdInUrl(normalized.sessionId);
+      setView("scoring");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSessionLoading(false);
+    }
   }
 
-  function handleResumeSession() {
-    if (!currentSession) return;
-    setView("scoring");
+  async function handleResumeSession() {
+    if (!currentSession?.sessionId) return;
+
+    setSessionLoading(true);
+    setError(null);
+    try {
+      const latest = normalizeSession(await fetchSharedSession(currentSession.sessionId));
+      setCurrentSession(latest);
+      setRoster(latest.roster);
+      setSessionIdInUrl(latest.sessionId);
+      setView("scoring");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSessionLoading(false);
+    }
   }
 
   function handleBackToPlanner() {
     setView("planner");
   }
 
-  function handleStartRound(stage, roundIndex) {
-    setCurrentSession((current) => {
-      const session = syncSessionState(current);
-      if (!session) return session;
+  async function handleCopyShareLink() {
+    if (!currentSession?.sessionId) return;
 
-      if (stage === "league") {
-        if (roundIndex !== session.activeLeagueRound + 1) return session;
-        return { ...session, activeLeagueRound: roundIndex };
-      }
-
-      const knockoutRounds = buildKnockoutRounds(
-        session.drawConfig,
-        session.roster,
-        session.leagueScoresByRound,
-        session.knockoutScoresByRound
-      );
-
-      if (!knockoutRounds[roundIndex] || roundIndex !== session.activeKnockoutRound + 1) {
-        return session;
-      }
-
-      return { ...session, activeKnockoutRound: roundIndex };
-    });
+    const shareUrl = buildShareUrl(currentSession.sessionId);
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setShareFeedback("Link copied");
+      window.setTimeout(() => setShareFeedback(""), 2000);
+    } catch {
+      setShareFeedback("Copy failed");
+      window.setTimeout(() => setShareFeedback(""), 2000);
+    }
   }
 
-  function handleScoreChange(stage, roundIndex, courtIndex, teamKey, rawValue) {
-    const sanitizedValue = rawValue === "" ? "" : Math.max(0, Number.parseInt(rawValue, 10) || 0);
+  async function handleStartRound(stage, roundIndex) {
+    if (!currentSession?.sessionId) return;
 
-    setCurrentSession((current) => {
-      const session = syncSessionState(current);
-      if (!session) return session;
-
-      const scoresKey = stage === "league" ? "leagueScoresByRound" : "knockoutScoresByRound";
-
-      return syncSessionState({
-        ...session,
-        [scoresKey]: session[scoresKey].map((roundScores, currentRoundIndex) => {
-          if (currentRoundIndex !== roundIndex) return roundScores;
-
-          return roundScores.map((courtScore, currentCourtIndex) => {
-            if (currentCourtIndex !== courtIndex) return courtScore;
-            return { ...courtScore, [teamKey]: sanitizedValue };
-          });
-        }),
+    try {
+      const updated = await startSharedRound(currentSession.sessionId, {
+        stage,
+        round_index: roundIndex,
       });
-    });
+      const normalized = normalizeSession(updated);
+      setCurrentSession(normalized);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    }
   }
+
+  async function handleScoreChange(stage, roundIndex, courtIndex, teamKey, rawValue) {
+    if (!currentSession?.sessionId) return;
+
+    const value = rawValue === "" ? null : Math.max(0, Number.parseInt(rawValue, 10) || 0);
+
+    try {
+      const updated = await updateSharedScore(currentSession.sessionId, {
+        stage,
+        round_index: roundIndex,
+        court_index: courtIndex,
+        team_key: teamKey,
+        value,
+      });
+      const normalized = normalizeSession(updated);
+      setCurrentSession(normalized);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  const downloadData = currentSession?.roster || roster;
+  const sessionShareUrl = currentSession?.sessionId ? buildShareUrl(currentSession.sessionId) : "";
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -295,8 +390,16 @@ export default function App() {
             </p>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-            {roster && <DownloadCSV data={roster} />}
-            {view === "planner" && currentSession && (
+            {downloadData && <DownloadCSV data={downloadData} />}
+            {currentSession?.sessionId && (
+              <button
+                onClick={handleCopyShareLink}
+                className="w-full sm:w-auto px-5 py-2.5 bg-white text-gray-700 text-sm font-semibold rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
+              >
+                {shareFeedback || "Copy Share Link"}
+              </button>
+            )}
+            {view === "planner" && currentSession?.sessionId && (
               <button
                 onClick={handleResumeSession}
                 className="w-full sm:w-auto px-5 py-2.5 bg-white text-gray-700 text-sm font-semibold rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
@@ -337,6 +440,12 @@ export default function App() {
           </div>
         )}
 
+        {sessionLoading && (
+          <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <p className="text-sm text-blue-700 font-medium">Syncing shared session...</p>
+          </div>
+        )}
+
         {view === "planner" ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
             <div className="lg:col-span-1 space-y-6">
@@ -373,31 +482,41 @@ export default function App() {
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <div>
                         <p className="text-sm font-medium text-slate-200">Roster Ready</p>
-                        <h2 className="mt-1 text-lg font-semibold">Lock this draw into a scoring session.</h2>
+                        <h2 className="mt-1 text-lg font-semibold">Lock this draw into a shared scoring session.</h2>
                       </div>
                       <button
                         onClick={handleLockRoster}
-                        className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100"
+                        disabled={sessionLoading}
+                        className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:opacity-60"
                       >
-                        Lock Roster and Start Session
+                        {sessionLoading ? "Creating Session..." : "Lock Roster and Start Session"}
                       </button>
                     </div>
                   </div>
-                  {currentSession && (
+                  {currentSession?.sessionId && (
                     <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm">
-                      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                         <div>
-                          <p className="text-sm font-semibold text-emerald-800">Active Session: {currentSession.name}</p>
+                          <p className="text-sm font-semibold text-emerald-800">Shared Session: {currentSession.name}</p>
                           <p className="text-sm text-emerald-700">
-                            Scores and round progress are saved locally in this browser, so you can refresh and continue later.
+                            Share this session across devices so others can score from their own phones.
                           </p>
+                          <p className="mt-1 text-xs text-emerald-700 break-all">{sessionShareUrl}</p>
                         </div>
-                        <button
-                          onClick={handleResumeSession}
-                          className="inline-flex min-h-11 items-center justify-center rounded-lg border border-emerald-300 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-100"
-                        >
-                          Continue Session
-                        </button>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <button
+                            onClick={handleCopyShareLink}
+                            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-emerald-300 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-100"
+                          >
+                            {shareFeedback || "Copy Link"}
+                          </button>
+                          <button
+                            onClick={handleResumeSession}
+                            className="inline-flex min-h-11 items-center justify-center rounded-lg border border-emerald-300 bg-white px-4 py-2.5 text-sm font-semibold text-emerald-800 transition-colors hover:bg-emerald-100"
+                          >
+                            Continue Session
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}

@@ -1,8 +1,16 @@
 """FastAPI backend for badminton roster generation."""
 
+from __future__ import annotations
+
+import secrets
+from copy import deepcopy
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
+from sqlalchemy import select
+
+from database import SharedSessionRecord, get_db_session, init_db
 from roster_engine import generate_roster, validate_roster, RosterError
 
 app = FastAPI(title="Badminton Roster API")
@@ -13,6 +21,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+def startup():
+    init_db()
 
 
 class RosterRequest(BaseModel):
@@ -60,6 +73,104 @@ class RosterResponse(BaseModel):
     fixed_pair_counts: dict[str, int]
     violations: list[str]
     warnings: list[str]
+
+
+class DrawConfig(BaseModel):
+    draw_type: str = "round_robin"
+    league_meetings: int = 1
+    knockout_qualifiers: int = 4
+
+
+class SharedSessionCreateRequest(BaseModel):
+    roster: RosterResponse
+    draw_config: DrawConfig
+    name: str | None = None
+
+
+class SharedSessionResponse(BaseModel):
+    session_id: str
+    name: str
+    roster: RosterResponse
+    draw_config: DrawConfig
+    league_scores_by_round: list[list[dict[str, int | str]]]
+    active_league_round: int
+    knockout_scores_by_round: list[list[dict[str, int | str]]]
+    active_knockout_round: int
+    version: int
+
+
+class RoundStartRequest(BaseModel):
+    stage: str
+    round_index: int
+
+
+class ScoreUpdateRequest(BaseModel):
+    stage: str
+    round_index: int
+    court_index: int
+    team_key: str
+    value: int | None = None
+
+
+def _create_empty_scores(rounds: list[RoundResult]) -> list[list[dict[str, int | str]]]:
+    return [
+        [
+            {"teamA": "", "teamB": ""}
+            for _ in round.courts
+        ]
+        for round in rounds
+    ]
+
+
+def _ensure_score_slot(scores: list[list[dict[str, int | str]]], round_index: int, court_index: int):
+    while len(scores) <= round_index:
+        scores.append([])
+
+    while len(scores[round_index]) <= court_index:
+        scores[round_index].append({"teamA": "", "teamB": ""})
+
+
+def _serialize_session(record: SharedSessionRecord) -> SharedSessionResponse:
+    payload = deepcopy(record.data)
+    return SharedSessionResponse(
+        session_id=record.session_id,
+        version=record.version,
+        **payload,
+    )
+
+
+def _generate_session_id() -> str:
+    return secrets.token_urlsafe(6)
+
+
+def _get_session_record(session_id: str) -> SharedSessionRecord:
+    with get_db_session() as db:
+        record = db.scalar(
+            select(SharedSessionRecord).where(SharedSessionRecord.session_id == session_id)
+        )
+        if not record:
+            raise HTTPException(status_code=404, detail="Shared session not found")
+        db.expunge(record)
+        return record
+
+
+def _update_session_record(session_id: str, updater) -> SharedSessionResponse:
+    with get_db_session() as db:
+        record = db.scalar(
+            select(SharedSessionRecord).where(SharedSessionRecord.session_id == session_id)
+        )
+        if not record:
+            raise HTTPException(status_code=404, detail="Shared session not found")
+
+        next_payload = deepcopy(record.data)
+        updater(next_payload)
+        record.data = next_payload
+        record.version += 1
+        db.add(record)
+        db.flush()
+        db.refresh(record)
+        db.expunge(record)
+        return _serialize_session(record)
 
 
 @app.post("/api/generate", response_model=RosterResponse)
@@ -110,3 +221,88 @@ def api_generate(req: RosterRequest):
         violations=violations,
         warnings=warnings,
     )
+
+
+@app.post("/api/sessions", response_model=SharedSessionResponse)
+def create_shared_session(req: SharedSessionCreateRequest):
+    payload = {
+        "name": req.name or f"session-{secrets.token_hex(2)}",
+        "roster": req.roster.model_dump(),
+        "draw_config": req.draw_config.model_dump(),
+        "league_scores_by_round": _create_empty_scores(req.roster.rounds),
+        "active_league_round": -1,
+        "knockout_scores_by_round": [],
+        "active_knockout_round": -1,
+    }
+
+    with get_db_session() as db:
+        while True:
+            session_id = _generate_session_id()
+            existing = db.scalar(
+                select(SharedSessionRecord).where(SharedSessionRecord.session_id == session_id)
+            )
+            if not existing:
+                break
+
+        record = SharedSessionRecord(
+            session_id=session_id,
+            name=payload["name"],
+            data=payload,
+            version=1,
+        )
+        db.add(record)
+        db.flush()
+        db.refresh(record)
+        db.expunge(record)
+        return _serialize_session(record)
+
+
+@app.get("/api/sessions/{session_id}", response_model=SharedSessionResponse)
+def get_shared_session(session_id: str):
+    record = _get_session_record(session_id)
+    return _serialize_session(record)
+
+
+@app.post("/api/sessions/{session_id}/start-round", response_model=SharedSessionResponse)
+def start_round(session_id: str, req: RoundStartRequest):
+    def updater(payload: dict):
+        if req.stage == "league":
+            current_round = payload["active_league_round"]
+            if req.round_index != current_round + 1:
+                raise HTTPException(status_code=409, detail="Round must be started in sequence")
+            payload["active_league_round"] = req.round_index
+            return
+
+        if req.stage != "knockout":
+            raise HTTPException(status_code=400, detail="Invalid stage")
+
+        current_round = payload["active_knockout_round"]
+        if req.round_index != current_round + 1:
+            raise HTTPException(status_code=409, detail="Round must be started in sequence")
+        payload["active_knockout_round"] = req.round_index
+
+    return _update_session_record(session_id, updater)
+
+
+@app.post("/api/sessions/{session_id}/score", response_model=SharedSessionResponse)
+def update_score(session_id: str, req: ScoreUpdateRequest):
+    if req.team_key not in {"teamA", "teamB"}:
+        raise HTTPException(status_code=400, detail="Invalid team key")
+
+    def updater(payload: dict):
+        scores_key = "league_scores_by_round" if req.stage == "league" else "knockout_scores_by_round"
+        if req.stage not in {"league", "knockout"}:
+            raise HTTPException(status_code=400, detail="Invalid stage")
+
+        try:
+            if req.stage == "knockout":
+                _ensure_score_slot(payload[scores_key], req.round_index, req.court_index)
+
+            round_scores = payload[scores_key][req.round_index]
+            court_score = round_scores[req.court_index]
+        except (IndexError, KeyError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid round or court index")
+
+        court_score[req.team_key] = "" if req.value is None else req.value
+
+    return _update_session_record(session_id, updater)
