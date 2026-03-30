@@ -83,6 +83,9 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
       if (next.draw_type === "league_knockout" && teamCount >= 2) {
         next.rounds = getDerivedLeagueRounds(next.league_meetings);
       }
+      if (next.draw_type === "league_knockout") {
+        next.pair_start_round = 1;
+      }
       if (teamCount >= 2) {
         next.pair_games = getDerivedPairGames(next.league_meetings);
       }
@@ -194,7 +197,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
   useEffect(() => {
     if (config.draw_type !== "league_knockout") return;
     if (derivedLeagueRounds > 0 && config.rounds !== derivedLeagueRounds) {
-      setConfig((prev) => ({ ...prev, rounds: derivedLeagueRounds }));
+      setConfig((prev) => ({ ...prev, rounds: derivedLeagueRounds, pair_start_round: 1 }));
     }
   }, [config.draw_type, config.rounds, derivedLeagueRounds, setConfig]);
 

@@ -34,6 +34,7 @@ const PLANNER_STORAGE_KEY = "badminton-roster:planner";
 const SESSION_STORAGE_KEY = "badminton-roster:session";
 const VIEW_STORAGE_KEY = "badminton-roster:view";
 const SESSION_POLL_INTERVAL_MS = 5000;
+const SCORE_SYNC_DELAY_MS = 450;
 
 const DEFAULT_CONFIG = {
   num_courts: 5,
@@ -186,6 +187,7 @@ export default function App() {
   const [sessionLoading, setSessionLoading] = useState(false);
   const [shareFeedback, setShareFeedback] = useState("");
   const timerRef = useRef(null);
+  const scoreSyncTimeoutsRef = useRef({});
 
   useEffect(() => {
     if (loading) {
@@ -255,6 +257,13 @@ export default function App() {
       setView("planner");
     }
   }, [view, currentSession, sessionLoading]);
+
+  useEffect(() => {
+    const pendingTimeouts = scoreSyncTimeoutsRef.current;
+    return () => {
+      Object.values(pendingTimeouts).forEach((timeoutId) => window.clearTimeout(timeoutId));
+    };
+  }, []);
 
   async function handleGenerate() {
     setLoading(true);
@@ -355,18 +364,32 @@ export default function App() {
     }
   }
 
-  async function handleScoreChange(stage, roundIndex, courtIndex, teamKey, rawValue) {
-    if (!currentSession?.sessionId) return;
+  function applyLocalScoreChange(session, stage, roundIndex, courtIndex, teamKey, rawValue) {
+    if (!session) return session;
 
-    const value = rawValue === "" ? null : Math.max(0, Number.parseInt(rawValue, 10) || 0);
+    const scoresKey = stage === "league" ? "leagueScoresByRound" : "knockoutScoresByRound";
 
+    return normalizeSession({
+      ...session,
+      [scoresKey]: session[scoresKey].map((roundScores, currentRoundIndex) => {
+        if (currentRoundIndex !== roundIndex) return roundScores;
+
+        return roundScores.map((courtScore, currentCourtIndex) => {
+          if (currentCourtIndex !== courtIndex) return courtScore;
+          return { ...courtScore, [teamKey]: rawValue };
+        });
+      }),
+    });
+  }
+
+  async function pushScoreUpdate(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue) {
     try {
-      const updated = await updateSharedScore(currentSession.sessionId, {
+      const updated = await updateSharedScore(sessionId, {
         stage,
         round_index: roundIndex,
         court_index: courtIndex,
         team_key: teamKey,
-        value,
+        value: rawValue === "" ? null : Math.max(0, Number.parseInt(rawValue, 10) || 0),
       });
       const normalized = normalizeSession(updated);
       setCurrentSession(normalized);
@@ -374,6 +397,43 @@ export default function App() {
     } catch (e) {
       setError(e.message);
     }
+  }
+
+  function getScoreSyncKey(stage, roundIndex, courtIndex, teamKey) {
+    return `${stage}:${roundIndex}:${courtIndex}:${teamKey}`;
+  }
+
+  function scheduleScoreSync(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue, immediate = false) {
+    const syncKey = getScoreSyncKey(stage, roundIndex, courtIndex, teamKey);
+    const existingTimeout = scoreSyncTimeoutsRef.current[syncKey];
+    if (existingTimeout) {
+      window.clearTimeout(existingTimeout);
+      delete scoreSyncTimeoutsRef.current[syncKey];
+    }
+
+    if (immediate) {
+      pushScoreUpdate(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue);
+      return;
+    }
+
+    scoreSyncTimeoutsRef.current[syncKey] = window.setTimeout(() => {
+      delete scoreSyncTimeoutsRef.current[syncKey];
+      pushScoreUpdate(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue);
+    }, SCORE_SYNC_DELAY_MS);
+  }
+
+  function handleScoreChange(stage, roundIndex, courtIndex, teamKey, rawValue) {
+    if (!currentSession?.sessionId) return;
+
+    setCurrentSession((current) =>
+      applyLocalScoreChange(current, stage, roundIndex, courtIndex, teamKey, rawValue)
+    );
+    scheduleScoreSync(currentSession.sessionId, stage, roundIndex, courtIndex, teamKey, rawValue);
+  }
+
+  function handleScoreCommit(stage, roundIndex, courtIndex, teamKey, rawValue) {
+    if (!currentSession?.sessionId) return;
+    scheduleScoreSync(currentSession.sessionId, stage, roundIndex, courtIndex, teamKey, rawValue, true);
   }
 
   const downloadData = currentSession?.roster || roster;
@@ -549,6 +609,7 @@ export default function App() {
             onBack={handleBackToPlanner}
             onStartRound={handleStartRound}
             onScoreChange={handleScoreChange}
+            onScoreCommit={handleScoreCommit}
           />
         ) : null}
       </main>

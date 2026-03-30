@@ -121,6 +121,7 @@ function RoundList({
   stage,
   onStartRound,
   onScoreChange,
+  onScoreCommit,
 }) {
   if (rounds.length === 0) return null;
 
@@ -200,6 +201,7 @@ function RoundList({
                             value={score.teamA}
                             disabled={!inputsEnabled}
                             onChange={(event) => onScoreChange(stage, roundIndex, courtIndex, "teamA", event.target.value)}
+                            onBlur={(event) => onScoreCommit(stage, roundIndex, courtIndex, "teamA", event.target.value)}
                             className="mt-1 block w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-3 text-center text-lg font-semibold text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:bg-gray-100"
                           />
                         </label>
@@ -212,6 +214,7 @@ function RoundList({
                             value={score.teamB}
                             disabled={!inputsEnabled}
                             onChange={(event) => onScoreChange(stage, roundIndex, courtIndex, "teamB", event.target.value)}
+                            onBlur={(event) => onScoreCommit(stage, roundIndex, courtIndex, "teamB", event.target.value)}
                             className="mt-1 block w-full min-w-0 rounded-lg border border-gray-300 bg-white px-3 py-3 text-center text-lg font-semibold text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:cursor-not-allowed disabled:bg-gray-100"
                           />
                         </label>
@@ -239,6 +242,7 @@ export default function ScoringPage({
   onBack,
   onStartRound,
   onScoreChange,
+  onScoreCommit,
 }) {
   const leagueRounds = roster.rounds.map((round) => ({
     ...round,
@@ -302,6 +306,7 @@ export default function ScoringPage({
             stage="league"
             onStartRound={onStartRound}
             onScoreChange={onScoreChange}
+            onScoreCommit={onScoreCommit}
           />
 
           {drawConfig?.draw_type === "league_knockout" && (
@@ -324,6 +329,7 @@ export default function ScoringPage({
                   stage="knockout"
                   onStartRound={onStartRound}
                   onScoreChange={onScoreChange}
+                  onScoreCommit={onScoreCommit}
                 />
               ) : (
                 <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
