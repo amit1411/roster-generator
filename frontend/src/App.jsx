@@ -7,6 +7,7 @@ import ScoringPage from "./components/ScoringPage";
 import {
   createSharedSession,
   deleteSharedSession,
+  editSharedRound,
   endSharedRound,
   fetchSharedSession,
   generateRoster,
@@ -333,6 +334,7 @@ export default function App() {
   const timerRef = useRef(null);
   const scoreSyncTimeoutsRef = useRef({});
   const pendingScoreEditsRef = useRef({});
+  const scoreMutationQueueRef = useRef(Promise.resolve());
 
   useEffect(() => {
     if (loading) {
@@ -422,6 +424,12 @@ export default function App() {
       Object.values(pendingTimeouts).forEach((timeoutId) => window.clearTimeout(timeoutId));
     };
   }, []);
+
+  function enqueueScoreMutation(task) {
+    const nextOperation = scoreMutationQueueRef.current.then(task, task);
+    scoreMutationQueueRef.current = nextOperation.catch(() => {});
+    return nextOperation;
+  }
 
   async function handleGenerate() {
     setLoading(true);
@@ -579,6 +587,23 @@ export default function App() {
     }
   }
 
+  async function handleEditRound(stage, roundIndex) {
+    if (!currentSession?.sessionId) return;
+
+    try {
+      await flushRoundScoreEdits(currentSession.sessionId, stage, roundIndex);
+      const updated = await editSharedRound(currentSession.sessionId, {
+        stage,
+        round_index: roundIndex,
+      });
+      const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
+      setCurrentSession(normalized);
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   function applyLocalScoreChange(session, stage, roundIndex, courtIndex, teamKey, rawValue) {
     if (!session) return session;
 
@@ -600,24 +625,27 @@ export default function App() {
   async function pushScoreUpdate(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue) {
     const syncKey = getScoreSyncKey(stage, roundIndex, courtIndex, teamKey);
 
-    try {
-      const updated = await updateSharedScore(sessionId, {
-        stage,
-        round_index: roundIndex,
-        court_index: courtIndex,
-        team_key: teamKey,
-        value: rawValue === "" ? null : Math.max(0, Number.parseInt(rawValue, 10) || 0),
-      });
-      if (pendingScoreEditsRef.current[syncKey]?.rawValue === rawValue) {
-        delete pendingScoreEditsRef.current[syncKey];
-      }
+    return enqueueScoreMutation(async () => {
+      try {
+        const updated = await updateSharedScore(sessionId, {
+          stage,
+          round_index: roundIndex,
+          court_index: courtIndex,
+          team_key: teamKey,
+          value: rawValue === "" ? null : Math.max(0, Number.parseInt(rawValue, 10) || 0),
+        });
+        if (pendingScoreEditsRef.current[syncKey]?.rawValue === rawValue) {
+          delete pendingScoreEditsRef.current[syncKey];
+        }
 
-      const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
-      setCurrentSession(normalized);
-      setError(null);
-    } catch (e) {
-      setError(e.message);
-    }
+        const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
+        setCurrentSession(normalized);
+        setError(null);
+      } catch (e) {
+        setError(e.message);
+        throw e;
+      }
+    });
   }
 
   async function flushRoundScoreEdits(sessionId, stage, roundIndex) {
@@ -633,11 +661,9 @@ export default function App() {
       }
     });
 
-    await Promise.all(
-      pendingEntries.map(([, edit]) =>
-        pushScoreUpdate(sessionId, stage, roundIndex, edit.courtIndex, edit.teamKey, edit.rawValue)
-      )
-    );
+    for (const [, edit] of pendingEntries) {
+      await pushScoreUpdate(sessionId, stage, roundIndex, edit.courtIndex, edit.teamKey, edit.rawValue);
+    }
   }
 
   function scheduleScoreSync(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue, immediate = false) {
@@ -891,6 +917,7 @@ export default function App() {
                 activeKnockoutRound={currentSession.activeKnockoutRound}
                 endedKnockoutRounds={currentSession.endedKnockoutRounds}
                 onBack={handleBackToPlanner}
+                onEditRound={handleEditRound}
                 onStartRound={handleStartRound}
                 onEndRound={handleEndRound}
                 onScoreChange={handleScoreChange}

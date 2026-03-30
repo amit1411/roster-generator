@@ -75,6 +75,24 @@ export async function endSharedRound(sessionId, payload) {
   return readJson(res);
 }
 
+export async function undoSharedSession(sessionId) {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/undo`, {
+    method: "POST",
+  });
+
+  return readJson(res);
+}
+
+export async function editSharedRound(sessionId, payload) {
+  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/edit-round`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  return readJson(res);
+}
+
 export async function updateSharedScore(sessionId, payload) {
   const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/score`, {
     method: "POST",

@@ -100,6 +100,7 @@ class SharedSessionResponse(BaseModel):
     knockout_scores_by_round: list[list[dict[str, int | str]]]
     active_knockout_round: int
     ended_knockout_rounds: list[bool]
+    can_undo: bool
     version: int
 
 
@@ -133,6 +134,11 @@ class RoundEndRequest(BaseModel):
     round_index: int
 
 
+class RoundEditRequest(BaseModel):
+    stage: str
+    round_index: int
+
+
 def _create_empty_scores(rounds: list[RoundResult]) -> list[list[dict[str, int | str]]]:
     return [
         [
@@ -162,17 +168,21 @@ def _upgrade_session_payload(payload: dict) -> dict:
     payload.setdefault("knockout_scores_by_round", [])
     payload.setdefault("active_knockout_round", -1)
     payload.setdefault("ended_knockout_rounds", [])
+    payload.setdefault("undo_stack", [])
     return payload
 
 
 def _serialize_session(record: SharedSessionRecord) -> SharedSessionResponse:
     payload = _upgrade_session_payload(deepcopy(record.data))
+    can_undo = len(payload.get("undo_stack", [])) > 0
+    response_payload = {key: value for key, value in payload.items() if key != "undo_stack"}
     return SharedSessionResponse(
         session_id=record.session_id,
         created_at=record.created_at.isoformat(),
         updated_at=record.updated_at.isoformat(),
+        can_undo=can_undo,
         version=record.version,
-        **payload,
+        **response_payload,
     )
 
 
@@ -260,6 +270,28 @@ def _update_session_record(session_id: str, updater) -> SharedSessionResponse:
         db.refresh(record)
         db.expunge(record)
         return _serialize_session(record)
+
+
+def _capture_undo_snapshot(payload: dict):
+    snapshot = {
+        "league_scores_by_round": deepcopy(payload["league_scores_by_round"]),
+        "active_league_round": payload["active_league_round"],
+        "ended_league_rounds": deepcopy(payload["ended_league_rounds"]),
+        "knockout_scores_by_round": deepcopy(payload["knockout_scores_by_round"]),
+        "active_knockout_round": payload["active_knockout_round"],
+        "ended_knockout_rounds": deepcopy(payload["ended_knockout_rounds"]),
+    }
+    payload["undo_stack"].append(snapshot)
+    payload["undo_stack"] = payload["undo_stack"][-30:]
+
+
+def _restore_undo_snapshot(payload: dict, snapshot: dict):
+    payload["league_scores_by_round"] = deepcopy(snapshot["league_scores_by_round"])
+    payload["active_league_round"] = snapshot["active_league_round"]
+    payload["ended_league_rounds"] = deepcopy(snapshot["ended_league_rounds"])
+    payload["knockout_scores_by_round"] = deepcopy(snapshot["knockout_scores_by_round"])
+    payload["active_knockout_round"] = snapshot["active_knockout_round"]
+    payload["ended_knockout_rounds"] = deepcopy(snapshot["ended_knockout_rounds"])
 
 
 @app.post("/api/generate", response_model=RosterResponse)
@@ -386,6 +418,7 @@ def start_round(session_id: str, req: RoundStartRequest):
                 raise HTTPException(status_code=409, detail="Round must be started in sequence")
             if req.round_index >= len(payload["league_scores_by_round"]):
                 raise HTTPException(status_code=400, detail="Invalid round index")
+            _capture_undo_snapshot(payload)
             payload["active_league_round"] = req.round_index
             return
 
@@ -398,6 +431,7 @@ def start_round(session_id: str, req: RoundStartRequest):
         _ensure_score_slot(payload["knockout_scores_by_round"], req.round_index, 0)
         while len(payload["ended_knockout_rounds"]) <= req.round_index:
             payload["ended_knockout_rounds"].append(False)
+        _capture_undo_snapshot(payload)
         payload["active_knockout_round"] = req.round_index
 
     return _update_session_record(session_id, updater)
@@ -416,6 +450,7 @@ def end_round(session_id: str, req: RoundEndRequest):
             if not all(score["teamA"] != "" and score["teamB"] != "" for score in round_scores):
                 raise HTTPException(status_code=409, detail="Enter all scores before ending the round")
 
+            _capture_undo_snapshot(payload)
             payload["ended_league_rounds"][req.round_index] = True
             return
 
@@ -435,7 +470,53 @@ def end_round(session_id: str, req: RoundEndRequest):
         if not all(score["teamA"] != "" and score["teamB"] != "" for score in round_scores):
             raise HTTPException(status_code=409, detail="Enter all scores before ending the round")
 
+        _capture_undo_snapshot(payload)
         payload["ended_knockout_rounds"][req.round_index] = True
+
+    return _update_session_record(session_id, updater)
+
+
+@app.post("/api/sessions/{session_id}/undo", response_model=SharedSessionResponse)
+def undo_last_change(session_id: str):
+    def updater(payload: dict):
+        if not payload["undo_stack"]:
+            raise HTTPException(status_code=409, detail="Nothing to undo")
+
+        snapshot = payload["undo_stack"].pop()
+        _restore_undo_snapshot(payload, snapshot)
+
+    return _update_session_record(session_id, updater)
+
+
+@app.post("/api/sessions/{session_id}/edit-round", response_model=SharedSessionResponse)
+def edit_round(session_id: str, req: RoundEditRequest):
+    def updater(payload: dict):
+        if req.stage == "league":
+            if req.round_index < 0 or req.round_index >= len(payload["ended_league_rounds"]):
+                raise HTTPException(status_code=400, detail="Invalid round index")
+            if not payload["ended_league_rounds"][req.round_index]:
+                raise HTTPException(status_code=409, detail="Only ended rounds can be edited")
+
+            _capture_undo_snapshot(payload)
+            payload["ended_league_rounds"][req.round_index] = False
+            payload["knockout_scores_by_round"] = []
+            payload["active_knockout_round"] = -1
+            payload["ended_knockout_rounds"] = []
+            return
+
+        if req.stage != "knockout":
+            raise HTTPException(status_code=400, detail="Invalid stage")
+
+        if req.round_index < 0 or req.round_index >= len(payload["ended_knockout_rounds"]):
+            raise HTTPException(status_code=400, detail="Invalid round index")
+        if not payload["ended_knockout_rounds"][req.round_index]:
+            raise HTTPException(status_code=409, detail="Only ended rounds can be edited")
+
+        _capture_undo_snapshot(payload)
+        payload["ended_knockout_rounds"] = payload["ended_knockout_rounds"][: req.round_index + 1]
+        payload["knockout_scores_by_round"] = payload["knockout_scores_by_round"][: req.round_index + 1]
+        payload["ended_knockout_rounds"][req.round_index] = False
+        payload["active_knockout_round"] = req.round_index
 
     return _update_session_record(session_id, updater)
 
@@ -465,6 +546,11 @@ def update_score(session_id: str, req: ScoreUpdateRequest):
         if payload[ended_key][req.round_index]:
             raise HTTPException(status_code=409, detail="Round is locked after being ended")
 
-        court_score[req.team_key] = "" if req.value is None else req.value
+        next_value = "" if req.value is None else req.value
+        if court_score[req.team_key] == next_value:
+            return
+
+        _capture_undo_snapshot(payload)
+        court_score[req.team_key] = next_value
 
     return _update_session_record(session_id, updater)

@@ -261,6 +261,7 @@ function RoundList({
   stage,
   onStartRound,
   onEndRound,
+  onEditRound,
   onScoreChange,
   onScoreCommit,
 }) {
@@ -303,13 +304,23 @@ function RoundList({
                 </p>
               </div>
               <button
-                onClick={() => (isLive ? onEndRound(stage, sourceIndex) : onStartRound(stage, sourceIndex))}
-                disabled={isLive ? !canEnd : !canStart || isEnded}
+                onClick={() =>
+                  isEnded
+                    ? onEditRound(stage, sourceIndex)
+                    : isLive
+                      ? onEndRound(stage, sourceIndex)
+                      : onStartRound(stage, sourceIndex)
+                }
+                disabled={isEnded ? false : isLive ? !canEnd : !canStart}
                 className={`inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 ${
-                  isLive ? "bg-rose-600 hover:bg-rose-700" : "bg-indigo-600 hover:bg-indigo-700"
+                  isEnded
+                    ? "bg-amber-500 hover:bg-amber-600"
+                    : isLive
+                      ? "bg-rose-600 hover:bg-rose-700"
+                      : "bg-indigo-600 hover:bg-indigo-700"
                 }`}
               >
-                {isEnded ? "Round Ended" : isLive ? "End Round" : "Start Round"}
+                {isEnded ? "Edit Scores" : isLive ? "End Round" : "Start Round"}
               </button>
             </div>
 
@@ -317,7 +328,12 @@ function RoundList({
               {round.courts.map((court, courtIndex) => {
                 const score = roundScores[courtIndex];
                 const winner = getMatchWinner(score, court);
-                const inputsEnabled = sourceIndex <= activeRound && !isEnded;
+                const hasCompleteTeams =
+                  Array.isArray(court.team_a) &&
+                  court.team_a.length > 0 &&
+                  Array.isArray(court.team_b) &&
+                  court.team_b.length > 0;
+                const inputsEnabled = sourceIndex <= activeRound && !isEnded && hasCompleteTeams;
 
                 return (
                   <div key={courtIndex} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -329,13 +345,16 @@ function RoundList({
                           </p>
                           <div className="mt-2 flex flex-col gap-2 text-sm text-gray-800">
                             <p className="rounded-lg bg-white px-3 py-2 font-medium shadow-sm">
-                              {court.team_a.join(" & ")}
+                              {formatTeamName(court.team_a)}
                             </p>
                             <p className="rounded-lg bg-white px-3 py-2 font-medium shadow-sm">
-                              {court.team_b.join(" & ")}
+                              {formatTeamName(court.team_b)}
                             </p>
                           </div>
                         </div>
+                        {!hasCompleteTeams ? (
+                          <p className="text-sm font-medium text-amber-700">Waiting for the previous playoff result.</p>
+                        ) : null}
                         {winner && (
                           <p className="text-sm font-medium text-green-700">Winner: {winner.join(" & ")}</p>
                         )}
@@ -440,6 +459,7 @@ export default function ScoringPage({
   activeKnockoutRound,
   endedKnockoutRounds,
   onBack,
+  onEditRound,
   onStartRound,
   onEndRound,
   onScoreChange,
@@ -549,6 +569,7 @@ export default function ScoringPage({
                 stage="league"
                 onStartRound={onStartRound}
                 onEndRound={onEndRound}
+                onEditRound={onEditRound}
                 onScoreChange={onScoreChange}
                 onScoreCommit={onScoreCommit}
               />
@@ -563,6 +584,7 @@ export default function ScoringPage({
                 stage="league"
                 onStartRound={onStartRound}
                 onEndRound={onEndRound}
+                onEditRound={onEditRound}
                 onScoreChange={onScoreChange}
                 onScoreCommit={onScoreCommit}
               />
@@ -577,6 +599,7 @@ export default function ScoringPage({
                 stage="league"
                 onStartRound={onStartRound}
                 onEndRound={onEndRound}
+                onEditRound={onEditRound}
                 onScoreChange={onScoreChange}
                 onScoreCommit={onScoreCommit}
               />
@@ -603,6 +626,7 @@ export default function ScoringPage({
                         stage="knockout"
                         onStartRound={onStartRound}
                         onEndRound={onEndRound}
+                        onEditRound={onEditRound}
                         onScoreChange={onScoreChange}
                         onScoreCommit={onScoreCommit}
                       />
@@ -617,6 +641,7 @@ export default function ScoringPage({
                         stage="knockout"
                         onStartRound={onStartRound}
                         onEndRound={onEndRound}
+                        onEditRound={onEditRound}
                         onScoreChange={onScoreChange}
                         onScoreCommit={onScoreCommit}
                       />
@@ -631,6 +656,7 @@ export default function ScoringPage({
                         stage="knockout"
                         onStartRound={onStartRound}
                         onEndRound={onEndRound}
+                        onEditRound={onEditRound}
                         onScoreChange={onScoreChange}
                         onScoreCommit={onScoreCommit}
                       />
