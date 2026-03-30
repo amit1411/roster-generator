@@ -189,6 +189,9 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
     { key: "pair_start_round", label: "Pair Start Round", min: 1, max: 30, hint: "Fixed pairs only play together from this round onwards" },
     { key: "max_consecutive_rest", label: "Max Consec. Rest", min: 1, max: 10, hint: "Max rounds a player can sit out in a row" },
   ];
+  const primaryFieldKeys = new Set(["num_courts", "rounds", "pair_games"]);
+  const primaryFields = fields.filter(({ key }) => primaryFieldKeys.has(key));
+  const advancedFields = fields.filter(({ key }) => !primaryFieldKeys.has(key));
 
   const courtNumbers = config.court_numbers || [];
   const derivedLeagueRounds = getDerivedLeagueRounds();
@@ -328,7 +331,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
       )}
 
       <div className="grid grid-cols-2 gap-3 mb-5">
-        {fields.map(({ key, label, min, max, hint }) => (
+        {primaryFields.map(({ key, label, min, max, hint }) => (
           <div key={key}>
             <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
               {label}
@@ -352,101 +355,144 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
             />
           </div>
         ))}
-        <div>
-          <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
-            Seed
-            <span className="relative group">
-              <svg className="w-3.5 h-3.5 text-gray-400 hover:text-indigo-500 transition-colors cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 text-xs text-white bg-gray-800 rounded-md shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-20">
-                Same seed = same roster. Leave empty for random.
-              </span>
-            </span>
-          </label>
-          <input
-            type="number"
-            value={seedDraft}
-            onChange={(e) => setSeedDraft(e.target.value)}
-            onBlur={commitSeedValue}
-            placeholder="Random"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-          />
-        </div>
       </div>
 
-      <div className="border-t border-gray-100 pt-4 mb-5">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-          Court Numbers
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {courtNumbers.map((num, i) => (
-            <div key={i} className="flex items-center gap-1">
-              <span className="text-xs text-gray-400">#{i + 1}:</span>
+      <details className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Advanced Settings</p>
+            <p className="mt-1 text-sm text-gray-500">
+              Court labels, rest balancing, seed, and per-player consecutive game limits.
+            </p>
+          </div>
+          <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-gray-600 shadow-sm">
+            Optional
+          </span>
+        </summary>
+
+        <div className="mt-4 space-y-5 border-t border-gray-200 pt-4">
+          <div className="grid grid-cols-2 gap-3">
+            {advancedFields.map(({ key, label, min, max, hint }) => (
+              <div key={key}>
+                <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
+                  {label}
+                  <span className="relative group">
+                    <svg className="w-3.5 h-3.5 text-gray-400 hover:text-indigo-500 transition-colors cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 text-xs text-white bg-gray-800 rounded-md shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-20">
+                      {hint}
+                    </span>
+                  </span>
+                </label>
+                <input
+                  type="number"
+                  min={min}
+                  max={max}
+                  value={draftValues[key]}
+                  onChange={(e) => updateNumericDraft(key, e.target.value)}
+                  onBlur={() => commitNumericValue(key, min, max)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+              </div>
+            ))}
+            <div>
+              <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
+                Seed
+                <span className="relative group">
+                  <svg className="w-3.5 h-3.5 text-gray-400 hover:text-indigo-500 transition-colors cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 text-xs text-white bg-gray-800 rounded-md shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-20">
+                    Same seed = same roster. Leave empty for random.
+                  </span>
+                </span>
+              </label>
               <input
-                type="text"
-                value={num}
-                onChange={(e) => updateCourtNumber(i, e.target.value)}
-                className="w-14 px-2 py-1 border border-gray-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                type="number"
+                value={seedDraft}
+                onChange={(e) => setSeedDraft(e.target.value)}
+                onBlur={commitSeedValue}
+                placeholder="Random"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               />
             </div>
-          ))}
-        </div>
-        <p className="text-xs text-gray-400 mt-1.5">
-          Set the actual court numbers at your venue (e.g. 3, 7, 12)
-        </p>
-      </div>
-
-      <div className="border-t border-gray-100 pt-4">
-        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
-          Consecutive Game Limits
-        </p>
-        <form onSubmit={addLimit} className="flex gap-2 mb-3">
-          <select
-            value={limitPlayer}
-            onChange={(e) => setLimitPlayer(e.target.value)}
-            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="">Select player...</option>
-            {players
-              .filter((p) => !(p in config.limits))
-              .map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-          </select>
-          <input
-            type="number"
-            min={1}
-            max={20}
-            value={limitValueDraft}
-            onChange={(e) => setLimitValueDraft(e.target.value)}
-            onBlur={commitLimitValue}
-            className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-          <button
-            type="submit"
-            className="px-3 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors"
-          >
-            Add
-          </button>
-        </form>
-
-        {Object.keys(config.limits).length > 0 && (
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(config.limits).map(([player, limit]) => (
-              <span
-                key={player}
-                className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-orange-50 border border-orange-200 text-orange-700"
-              >
-                {player}: max {limit}
-                <button onClick={() => removeLimit(player)} className="hover:text-red-600 ml-0.5">
-                  &times;
-                </button>
-              </span>
-            ))}
           </div>
-        )}
-      </div>
+
+          <div className="border-t border-gray-200 pt-4">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+              Court Numbers
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {courtNumbers.map((num, i) => (
+                <div key={i} className="flex items-center gap-1">
+                  <span className="text-xs text-gray-400">#{i + 1}:</span>
+                  <input
+                    type="text"
+                    value={num}
+                    onChange={(e) => updateCourtNumber(i, e.target.value)}
+                    className="w-14 px-2 py-1 border border-gray-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  />
+                </div>
+              ))}
+            </div>
+            <p className="text-xs text-gray-400 mt-1.5">
+              Set the actual court numbers at your venue (e.g. 3, 7, 12)
+            </p>
+          </div>
+
+          <div className="border-t border-gray-200 pt-4">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
+              Consecutive Game Limits
+            </p>
+            <form onSubmit={addLimit} className="flex gap-2 mb-3">
+              <select
+                value={limitPlayer}
+                onChange={(e) => setLimitPlayer(e.target.value)}
+                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="">Select player...</option>
+                {players
+                  .filter((p) => !(p in config.limits))
+                  .map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+              </select>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                value={limitValueDraft}
+                onChange={(e) => setLimitValueDraft(e.target.value)}
+                onBlur={commitLimitValue}
+                className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+              <button
+                type="submit"
+                className="px-3 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors"
+              >
+                Add
+              </button>
+            </form>
+
+            {Object.keys(config.limits).length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(config.limits).map(([player, limit]) => (
+                  <span
+                    key={player}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full bg-orange-50 border border-orange-200 text-orange-700"
+                  >
+                    {player}: max {limit}
+                    <button onClick={() => removeLimit(player)} className="hover:text-red-600 ml-0.5">
+                      &times;
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </details>
     </div>
   );
 }
