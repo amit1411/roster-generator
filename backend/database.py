@@ -9,9 +9,22 @@ from sqlalchemy import JSON, DateTime, Integer, String, create_engine, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql+psycopg://postgres:postgres@localhost:5433/badminton_roster",
+def normalize_database_url(raw_url: str) -> str:
+    """Force SQLAlchemy to use psycopg v3 for Postgres URLs."""
+    if raw_url.startswith("postgresql+psycopg://"):
+        return raw_url
+    if raw_url.startswith("postgres://"):
+        return raw_url.replace("postgres://", "postgresql+psycopg://", 1)
+    if raw_url.startswith("postgresql://"):
+        return raw_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    return raw_url
+
+
+DATABASE_URL = normalize_database_url(
+    os.getenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://postgres:postgres@localhost:5433/badminton_roster",
+    )
 )
 
 
