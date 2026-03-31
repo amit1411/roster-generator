@@ -258,7 +258,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
             Playoff Setup
           </p>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
                 League Meetings
@@ -330,7 +330,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3 mb-5">
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
         {primaryFields.map(({ key, label, min, max, hint }) => (
           <div key={key}>
             <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
@@ -351,14 +351,14 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
               value={draftValues[key]}
               onChange={(e) => updateNumericDraft(key, e.target.value)}
               onBlur={() => commitNumericValue(key, min, max)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              className="w-full rounded-lg border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
         ))}
       </div>
 
       <details className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
+        <summary className="flex cursor-pointer list-none flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
           <div>
             <p className="text-sm font-semibold text-gray-900">Advanced Settings</p>
             <p className="mt-1 text-sm text-gray-500">
@@ -371,7 +371,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
         </summary>
 
         <div className="mt-4 space-y-5 border-t border-gray-200 pt-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {advancedFields.map(({ key, label, min, max, hint }) => (
               <div key={key}>
                 <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
@@ -392,7 +392,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
                   value={draftValues[key]}
                   onChange={(e) => updateNumericDraft(key, e.target.value)}
                   onBlur={() => commitNumericValue(key, min, max)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  className="w-full rounded-lg border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
             ))}
@@ -414,7 +414,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
                 onChange={(e) => setSeedDraft(e.target.value)}
                 onBlur={commitSeedValue}
                 placeholder="Random"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full rounded-lg border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
             </div>
           </div>
@@ -423,7 +423,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
               Court Numbers
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               {courtNumbers.map((num, i) => (
                 <div key={i} className="flex items-center gap-1">
                   <span className="text-xs text-gray-400">#{i + 1}:</span>
@@ -431,7 +431,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
                     type="text"
                     value={num}
                     onChange={(e) => updateCourtNumber(i, e.target.value)}
-                    className="w-14 px-2 py-1 border border-gray-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    className="w-full min-w-0 rounded border border-gray-300 px-2 py-2 text-center text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:w-14"
                   />
                 </div>
               ))}
@@ -445,11 +445,11 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">
               Consecutive Game Limits
             </p>
-            <form onSubmit={addLimit} className="flex gap-2 mb-3">
+            <form onSubmit={addLimit} className="mb-3 flex flex-col gap-2 sm:flex-row">
               <select
                 value={limitPlayer}
                 onChange={(e) => setLimitPlayer(e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="flex-1 rounded-lg border border-gray-300 px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               >
                 <option value="">Select player...</option>
                 {players
@@ -465,11 +465,11 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
                 value={limitValueDraft}
                 onChange={(e) => setLimitValueDraft(e.target.value)}
                 onBlur={commitLimitValue}
-                className="w-20 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full rounded-lg border border-gray-300 px-3 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 sm:w-20"
               />
               <button
                 type="submit"
-                className="px-3 py-2 bg-gray-100 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-200 transition-colors"
+                className="inline-flex min-h-11 items-center justify-center rounded-lg bg-gray-100 px-3 py-3 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200"
               >
                 Add
               </button>

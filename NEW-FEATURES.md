@@ -1,10 +1,12 @@
 ## TODO NEXT
 
-- View-only vs scorer links
 
 ## BACKLOG
 
+- View-only vs scorer links
 - Rename session
 - Realtime sync with WebSockets
 - Tournament summary / results page
 - Player replacement mid-session
+
+## Completed Features

@@ -34,7 +34,7 @@ export default function RosterTable({ data, fixedPairs }) {
         <div className="block lg:hidden p-4 space-y-4">
           {rounds.map((round) => (
             <div key={round.round} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-              <div className="flex items-center justify-between gap-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <h3 className="text-base font-semibold text-gray-900">Round {round.round}</h3>
                 <span className="text-xs font-medium text-gray-500">
                   {round.courts.length} courts
@@ -48,7 +48,7 @@ export default function RosterTable({ data, fixedPairs }) {
 
                   return (
                     <div key={`${round.round}-${ci}`} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-                      <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      <div className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:flex-row sm:items-center sm:justify-between">
                         <span>Court {court_numbers?.[ci] ?? ci + 1}</span>
                         {pairA || pairB ? <span className="text-indigo-600">Fixed Pair Match</span> : null}
                       </div>
@@ -144,7 +144,7 @@ export default function RosterTable({ data, fixedPairs }) {
               .map(([player, rested]) => {
                 const played = rounds.length - rested;
                 return (
-                  <div key={player} className="flex items-start justify-between gap-3 text-sm">
+                  <div key={player} className="flex flex-col gap-1 text-sm sm:flex-row sm:items-start sm:justify-between">
                     <span className="text-gray-700 break-words">{player}</span>
                     <div className="flex shrink-0 gap-3 text-xs">
                       <span className="text-green-600 font-medium">Played {played}</span>
@@ -166,7 +166,7 @@ export default function RosterTable({ data, fixedPairs }) {
                 {Object.entries(fixed_pair_counts)
                   .sort(([a], [b]) => a.localeCompare(b))
                   .map(([pair, count]) => (
-                    <div key={pair} className="flex items-start justify-between gap-3 text-sm">
+                    <div key={pair} className="flex flex-col gap-1 text-sm sm:flex-row sm:items-start sm:justify-between">
                       <span className="text-gray-700 break-words">{pair}</span>
                       <span className="shrink-0 font-medium text-indigo-600">{count} games</span>
                     </div>
