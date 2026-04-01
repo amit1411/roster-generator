@@ -703,12 +703,13 @@ export default function App() {
 
   async function handleStartRound(stage, roundIndex) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
+    const { sessionId, editToken } = currentSession;
 
     try {
-      const updated = await startSharedRound(currentSession.sessionId, {
+      const updated = await startSharedRound(sessionId, {
         stage,
         round_index: roundIndex,
-      }, currentSession.editToken);
+      }, editToken);
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
@@ -720,13 +721,14 @@ export default function App() {
 
   async function handleEndRound(stage, roundIndex) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
+    const { sessionId, editToken } = currentSession;
 
     try {
-      await flushRoundScoreEdits(currentSession.sessionId, stage, roundIndex);
-      const updated = await endSharedRound(currentSession.sessionId, {
+      await flushRoundScoreEdits(sessionId, stage, roundIndex, editToken);
+      const updated = await endSharedRound(sessionId, {
         stage,
         round_index: roundIndex,
-      }, currentSession.editToken);
+      }, editToken);
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
@@ -738,13 +740,14 @@ export default function App() {
 
   async function handleEditRound(stage, roundIndex) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
+    const { sessionId, editToken } = currentSession;
 
     try {
-      await flushRoundScoreEdits(currentSession.sessionId, stage, roundIndex);
-      const updated = await editSharedRound(currentSession.sessionId, {
+      await flushRoundScoreEdits(sessionId, stage, roundIndex, editToken);
+      const updated = await editSharedRound(sessionId, {
         stage,
         round_index: roundIndex,
-      }, currentSession.editToken);
+      }, editToken);
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
@@ -772,7 +775,7 @@ export default function App() {
     });
   }
 
-  async function pushScoreUpdate(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue) {
+  async function pushScoreUpdate(sessionId, editToken, stage, roundIndex, courtIndex, teamKey, rawValue) {
     const syncKey = getScoreSyncKey(stage, roundIndex, courtIndex, teamKey);
 
     return enqueueScoreMutation(async () => {
@@ -783,7 +786,7 @@ export default function App() {
           court_index: courtIndex,
           team_key: teamKey,
           value: rawValue === "" ? null : Math.max(0, Number.parseInt(rawValue, 10) || 0),
-        }, currentSession?.editToken || sessionAccess[sessionId] || null);
+        }, editToken || sessionAccess[sessionId] || null);
         if (pendingScoreEditsRef.current[syncKey]?.rawValue === rawValue) {
           delete pendingScoreEditsRef.current[syncKey];
         }
@@ -797,7 +800,7 @@ export default function App() {
     });
   }
 
-  async function flushRoundScoreEdits(sessionId, stage, roundIndex) {
+  async function flushRoundScoreEdits(sessionId, stage, roundIndex, editToken) {
     const pendingEntries = Object.entries(pendingScoreEditsRef.current).filter(([, edit]) =>
       edit.stage === stage && edit.roundIndex === roundIndex
     );
@@ -817,7 +820,7 @@ export default function App() {
         stage,
         round_index: roundIndex,
         updates,
-      }, currentSession?.editToken || sessionAccess[sessionId] || null);
+      }, editToken || sessionAccess[sessionId] || null);
 
       pendingEntries.forEach(([syncKey, edit]) => {
         if (pendingScoreEditsRef.current[syncKey]?.rawValue === edit.rawValue) {
@@ -848,7 +851,7 @@ export default function App() {
 
   function handleScoreCommit(stage, roundIndex, courtIndex, teamKey, rawValue) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
-    pushScoreUpdate(currentSession.sessionId, stage, roundIndex, courtIndex, teamKey, rawValue);
+    pushScoreUpdate(currentSession.sessionId, currentSession.editToken, stage, roundIndex, courtIndex, teamKey, rawValue);
   }
 
   const canContinueFromPlayers = players.length >= 4;
