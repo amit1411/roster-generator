@@ -33,46 +33,52 @@ export default function RosterTable({ data, fixedPairs }) {
         </div>
         <div className="block lg:hidden p-4 space-y-4">
           {rounds.map((round) => (
-            <div key={round.round} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <details
+              key={round.round}
+              className="rounded-xl border border-gray-200 bg-gray-50"
+              open={round.round === 1}
+            >
+              <summary className="flex cursor-pointer list-none flex-col gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
                 <h3 className="text-base font-semibold text-gray-900">Round {round.round}</h3>
                 <span className="text-xs font-medium text-gray-500">
-                  {round.courts.length} courts
+                  {round.courts.length} courts{round.resting.length > 0 ? ` • ${round.resting.length} resting` : ""}
                 </span>
-              </div>
+              </summary>
 
-              <div className="mt-3 space-y-3">
-                {round.courts.map((court, ci) => {
-                  const pairA = isFixedPairTeam(court.team_a);
-                  const pairB = isFixedPairTeam(court.team_b);
+              <div className="border-t border-gray-200 px-4 py-4">
+                <div className="space-y-3">
+                  {round.courts.map((court, ci) => {
+                    const pairA = isFixedPairTeam(court.team_a);
+                    const pairB = isFixedPairTeam(court.team_b);
 
-                  return (
-                    <div key={`${round.round}-${ci}`} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
-                      <div className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:flex-row sm:items-center sm:justify-between">
-                        <span>Court {court_numbers?.[ci] ?? ci + 1}</span>
-                        {pairA || pairB ? <span className="text-indigo-600">Fixed Pair Match</span> : null}
-                      </div>
-
-                      <div className="mt-3 space-y-2">
-                        <div className={`rounded-lg px-3 py-2 text-sm ${pairA ? "bg-indigo-50 text-indigo-700 font-semibold" : "bg-gray-50 text-gray-800"}`}>
-                          {court.team_a.join(" & ")}
+                    return (
+                      <div key={`${round.round}-${ci}`} className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm">
+                        <div className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wide text-gray-500 sm:flex-row sm:items-center sm:justify-between">
+                          <span>Court {court_numbers?.[ci] ?? ci + 1}</span>
+                          {pairA || pairB ? <span className="text-indigo-600">Fixed Pair Match</span> : null}
                         </div>
-                        <div className={`rounded-lg px-3 py-2 text-sm ${pairB ? "bg-indigo-50 text-indigo-700 font-semibold" : "bg-gray-50 text-gray-800"}`}>
-                          {court.team_b.join(" & ")}
+
+                        <div className="mt-3 space-y-2">
+                          <div className={`rounded-lg px-3 py-2 text-sm ${pairA ? "bg-indigo-50 text-indigo-700 font-semibold" : "bg-gray-50 text-gray-800"}`}>
+                            {court.team_a.join(" & ")}
+                          </div>
+                          <div className={`rounded-lg px-3 py-2 text-sm ${pairB ? "bg-indigo-50 text-indigo-700 font-semibold" : "bg-gray-50 text-gray-800"}`}>
+                            {court.team_b.join(" & ")}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {round.resting.length > 0 && (
-                <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Resting</p>
-                  <p className="mt-1 text-sm text-amber-900">{round.resting.join(", ")}</p>
+                    );
+                  })}
                 </div>
-              )}
-            </div>
+
+                {round.resting.length > 0 && (
+                  <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Resting</p>
+                    <p className="mt-1 text-sm text-amber-900">{round.resting.join(", ")}</p>
+                  </div>
+                )}
+              </div>
+            </details>
           ))}
         </div>
 
@@ -134,45 +140,49 @@ export default function RosterTable({ data, fixedPairs }) {
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-          <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
-            Rest Distribution
-          </h3>
-          <div className="space-y-1.5">
-            {Object.entries(rest_counts)
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([player, rested]) => {
-                const played = rounds.length - rested;
-                return (
-                  <div key={player} className="flex flex-col gap-1 text-sm sm:flex-row sm:items-start sm:justify-between">
-                    <span className="text-gray-700 break-words">{player}</span>
-                    <div className="flex shrink-0 gap-3 text-xs">
-                      <span className="text-green-600 font-medium">Played {played}</span>
-                      <span className="text-gray-400">Rested {rested}</span>
+        <details className="rounded-xl border border-gray-200 bg-white shadow-sm" open>
+          <summary className="cursor-pointer list-none px-5 py-4">
+            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Rest Distribution</h3>
+          </summary>
+          <div className="border-t border-gray-100 px-5 py-4">
+            <div className="space-y-1.5">
+              {Object.entries(rest_counts)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([player, rested]) => {
+                  const played = rounds.length - rested;
+                  return (
+                    <div key={player} className="flex flex-col gap-1 text-sm sm:flex-row sm:items-start sm:justify-between">
+                      <span className="text-gray-700 break-words">{player}</span>
+                      <div className="flex shrink-0 gap-3 text-xs">
+                        <span className="text-green-600 font-medium">Played {played}</span>
+                        <span className="text-gray-400">Rested {rested}</span>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+            </div>
           </div>
-        </div>
+        </details>
 
         <div className="space-y-4">
           {Object.keys(fixed_pair_counts).length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-              <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
-                Fixed Pair Games
-              </h3>
-              <div className="space-y-1.5">
-                {Object.entries(fixed_pair_counts)
-                  .sort(([a], [b]) => a.localeCompare(b))
-                  .map(([pair, count]) => (
-                    <div key={pair} className="flex flex-col gap-1 text-sm sm:flex-row sm:items-start sm:justify-between">
-                      <span className="text-gray-700 break-words">{pair}</span>
-                      <span className="shrink-0 font-medium text-indigo-600">{count} games</span>
-                    </div>
-                  ))}
+            <details className="rounded-xl border border-gray-200 bg-white shadow-sm">
+              <summary className="cursor-pointer list-none px-5 py-4">
+                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Fixed Pair Games</h3>
+              </summary>
+              <div className="border-t border-gray-100 px-5 py-4">
+                <div className="space-y-1.5">
+                  {Object.entries(fixed_pair_counts)
+                    .sort(([a], [b]) => a.localeCompare(b))
+                    .map(([pair, count]) => (
+                      <div key={pair} className="flex flex-col gap-1 text-sm sm:flex-row sm:items-start sm:justify-between">
+                        <span className="text-gray-700 break-words">{pair}</span>
+                        <span className="shrink-0 font-medium text-indigo-600">{count} games</span>
+                      </div>
+                    ))}
+                </div>
               </div>
-            </div>
+            </details>
           )}
 
           {violations.length > 0 && (
