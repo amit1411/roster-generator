@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 import secrets
+import time
 from copy import deepcopy
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 
 from database import SharedSessionRecord, get_db_session, init_db
 from roster_engine import generate_roster, validate_roster, RosterError
@@ -277,23 +279,36 @@ def _require_edit_access(payload: dict, edit_token: str | None):
 
 
 def _update_session_record(session_id: str, updater, edit_token: str | None = None) -> SharedSessionResponse:
-    with get_db_session() as db:
-        record = db.scalar(
-            select(SharedSessionRecord).where(SharedSessionRecord.session_id == session_id)
-        )
-        if not record:
-            raise HTTPException(status_code=404, detail="Shared session not found")
+    for attempt in range(3):
+        try:
+            with get_db_session() as db:
+                record = db.scalar(
+                    select(SharedSessionRecord)
+                    .where(SharedSessionRecord.session_id == session_id)
+                    .with_for_update()
+                )
+                if not record:
+                    raise HTTPException(status_code=404, detail="Shared session not found")
 
-        next_payload = _upgrade_session_payload(deepcopy(record.data))
-        _require_edit_access(next_payload, edit_token)
-        updater(next_payload)
-        record.data = next_payload
-        record.version += 1
-        db.add(record)
-        db.flush()
-        db.refresh(record)
-        db.expunge(record)
-        return _serialize_session(record, edit_token=edit_token)
+                next_payload = _upgrade_session_payload(deepcopy(record.data))
+                _require_edit_access(next_payload, edit_token)
+                changed = updater(next_payload)
+                if changed is False:
+                    db.expunge(record)
+                    return _serialize_session(record, edit_token=edit_token)
+
+                record.data = next_payload
+                record.version += 1
+                db.add(record)
+                db.flush()
+                db.refresh(record)
+                db.expunge(record)
+                return _serialize_session(record, edit_token=edit_token)
+        except OperationalError as exc:
+            message = str(exc).lower()
+            if "statement timeout" not in message or attempt == 2:
+                raise
+            time.sleep(0.2 * (attempt + 1))
 
 
 def _capture_undo_snapshot(payload: dict):
@@ -575,9 +590,10 @@ def update_score(session_id: str, req: ScoreUpdateRequest, edit_token: str | Non
 
         next_value = "" if req.value is None else req.value
         if court_score[req.team_key] == next_value:
-            return
+            return False
 
         _capture_undo_snapshot(payload)
         court_score[req.team_key] = next_value
+        return True
 
     return _update_session_record(session_id, updater, edit_token=edit_token)
