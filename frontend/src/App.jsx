@@ -36,6 +36,7 @@ const DEFAULT_PAIRS = [
 
 const PLANNER_STORAGE_KEY = "badminton-roster:planner";
 const SESSION_STORAGE_KEY = "badminton-roster:session";
+const SESSION_ACCESS_STORAGE_KEY = "badminton-roster:session-access";
 const VIEW_STORAGE_KEY = "badminton-roster:view";
 const SESSION_POLL_INTERVAL_MS = 5000;
 const SCORE_SYNC_DELAY_MS = 450;
@@ -96,12 +97,19 @@ function getLeagueRequestPayload(players, fixedPairs, config) {
   };
 }
 
-function getSessionIdFromUrl() {
+function getSessionContextFromUrl() {
   if (typeof window === "undefined") return null;
-  return new URLSearchParams(window.location.search).get("session");
+  const params = new URLSearchParams(window.location.search);
+  const sessionId = params.get("session");
+  if (!sessionId) return null;
+
+  return {
+    sessionId,
+    editToken: params.get("edit"),
+  };
 }
 
-function setSessionIdInUrl(sessionId) {
+function setSessionIdInUrl(sessionId, editToken = null) {
   if (typeof window === "undefined") return;
 
   const url = new URL(window.location.href);
@@ -110,13 +118,23 @@ function setSessionIdInUrl(sessionId) {
   } else {
     url.searchParams.delete("session");
   }
+  if (editToken) {
+    url.searchParams.set("edit", editToken);
+  } else {
+    url.searchParams.delete("edit");
+  }
   window.history.replaceState({}, "", url);
 }
 
-function buildShareUrl(sessionId) {
+function buildShareUrl(sessionId, editToken = null) {
   if (typeof window === "undefined" || !sessionId) return "";
   const url = new URL(window.location.href);
   url.searchParams.set("session", sessionId);
+  if (editToken) {
+    url.searchParams.set("edit", editToken);
+  } else {
+    url.searchParams.delete("edit");
+  }
   return url.toString();
 }
 
@@ -201,6 +219,8 @@ function normalizeSession(session) {
       : Array.isArray(session.ended_knockout_rounds)
         ? session.ended_knockout_rounds
         : [],
+    canEdit: session.canEdit ?? session.can_edit ?? false,
+    editToken: session.editToken || session.edit_token || null,
     version: session.version || 1,
   };
 
@@ -256,7 +276,7 @@ function mergePendingScoreEdits(session, pendingEdits) {
   return nextSession;
 }
 
-function SessionCard({ session, isCurrent, feedback, onOpen, onCopy, onDelete }) {
+function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, onDelete }) {
   const statusTone =
     session.status === "completed"
       ? "bg-emerald-100 text-emerald-700"
@@ -283,6 +303,9 @@ function SessionCard({ session, isCurrent, feedback, onOpen, onCopy, onDelete })
           <p className="mt-2 text-sm text-gray-500">
             {session.endedRounds} / {session.totalRounds || "?"} rounds ended
           </p>
+          <p className="mt-1 text-xs font-medium text-gray-500">
+            {canScore ? "Scorer access available on this device" : "View-only link available"}
+          </p>
           <p className="mt-1 text-xs text-gray-400">Updated {formatSessionTime(session.updatedAt)}</p>
         </div>
 
@@ -291,18 +314,28 @@ function SessionCard({ session, isCurrent, feedback, onOpen, onCopy, onDelete })
             onClick={() => onOpen(session.sessionId)}
             className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
           >
-            Open Session
+            {canScore ? "Open Scorer View" : "Open View Link"}
           </button>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button
-              onClick={() => onCopy(session.sessionId)}
+              onClick={() => onCopy(session.sessionId, "view")}
               className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
             >
-              {feedback || "Copy Link"}
+              {feedback?.mode === "view" ? feedback.text : "Copy View"}
             </button>
             <button
+              onClick={() => onCopy(session.sessionId, "scorer")}
+              disabled={!canScore}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
+            >
+              {feedback?.mode === "scorer" ? feedback.text : "Copy Scorer"}
+            </button>
+          </div>
+          <div className="grid grid-cols-1 gap-2">
+            <button
               onClick={() => onDelete(session.sessionId)}
-              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+              disabled={!canScore}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
             >
               Delete
             </button>
@@ -316,6 +349,7 @@ function SessionCard({ session, isCurrent, feedback, onOpen, onCopy, onDelete })
 export default function App() {
   const plannerState = readStorage(PLANNER_STORAGE_KEY, null);
   const savedSession = readStorage(SESSION_STORAGE_KEY, null);
+  const savedSessionAccess = readStorage(SESSION_ACCESS_STORAGE_KEY, {});
   const initialView = readStorage(VIEW_STORAGE_KEY, "planner");
 
   const [players, setPlayers] = useState(plannerState?.players || DEFAULT_PLAYERS);
@@ -328,6 +362,7 @@ export default function App() {
   const [currentSession, setCurrentSession] = useState(normalizeSession(savedSession));
   const [view, setView] = useState(initialView);
   const [sessionLoading, setSessionLoading] = useState(false);
+  const [sessionAccess, setSessionAccess] = useState(savedSessionAccess);
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [shareFeedback, setShareFeedback] = useState({ sessionId: null, text: "" });
@@ -359,6 +394,10 @@ export default function App() {
   }, [currentSession]);
 
   useEffect(() => {
+    writeStorage(SESSION_ACCESS_STORAGE_KEY, sessionAccess);
+  }, [sessionAccess]);
+
+  useEffect(() => {
     writeStorage(VIEW_STORAGE_KEY, view);
   }, [view]);
 
@@ -373,13 +412,14 @@ export default function App() {
   }, [view]);
 
   useEffect(() => {
-    const urlSessionId = getSessionIdFromUrl();
-    if (!urlSessionId) return;
+    const urlSession = getSessionContextFromUrl();
+    if (!urlSession?.sessionId) return;
 
     setSessionLoading(true);
-    fetchSharedSession(urlSessionId)
+    fetchSharedSession(urlSession.sessionId, urlSession.editToken)
       .then((session) => {
         const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
+        rememberSessionAccess(normalized.sessionId, normalized.editToken);
         setCurrentSession(normalized);
         setRoster(normalized.roster);
         setView("scoring");
@@ -397,10 +437,11 @@ export default function App() {
     const intervalId = window.setInterval(async () => {
       try {
         const latest = mergePendingScoreEdits(
-          normalizeSession(await fetchSharedSession(currentSession.sessionId)),
+          normalizeSession(await fetchSharedSession(currentSession.sessionId, currentSession.editToken)),
           pendingScoreEditsRef.current
         );
         if (latest.version !== currentSession.version) {
+          rememberSessionAccess(latest.sessionId, latest.editToken);
           setCurrentSession(latest);
           setRoster(latest.roster);
         }
@@ -410,7 +451,7 @@ export default function App() {
     }, SESSION_POLL_INTERVAL_MS);
 
     return () => window.clearInterval(intervalId);
-  }, [currentSession?.sessionId, currentSession?.version]);
+  }, [currentSession?.editToken, currentSession?.sessionId, currentSession?.version]);
 
   useEffect(() => {
     if (view === "scoring" && !currentSession && !sessionLoading) {
@@ -452,6 +493,11 @@ export default function App() {
     return `Waking up server... (${elapsed}s)`;
   }
 
+  function rememberSessionAccess(sessionId, editToken) {
+    if (!sessionId || !editToken) return;
+    setSessionAccess((current) => ({ ...current, [sessionId]: editToken }));
+  }
+
   async function loadSessions() {
     setSessionsLoading(true);
     try {
@@ -480,8 +526,9 @@ export default function App() {
         },
       });
       const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
+      rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
-      setSessionIdInUrl(normalized.sessionId);
+      setSessionIdInUrl(normalized.sessionId, normalized.editToken);
       setView("scoring");
       await loadSessions();
     } catch (e) {
@@ -495,13 +542,15 @@ export default function App() {
     setSessionLoading(true);
     setError(null);
     try {
+      const editToken = sessionAccess[sessionId] || null;
       const latest = mergePendingScoreEdits(
-        normalizeSession(await fetchSharedSession(sessionId)),
+        normalizeSession(await fetchSharedSession(sessionId, editToken)),
         pendingScoreEditsRef.current
       );
+      rememberSessionAccess(latest.sessionId, latest.editToken);
       setCurrentSession(latest);
       setRoster(latest.roster);
-      setSessionIdInUrl(latest.sessionId);
+      setSessionIdInUrl(latest.sessionId, latest.editToken);
       setView("scoring");
       await loadSessions();
     } catch (e) {
@@ -515,16 +564,16 @@ export default function App() {
     setView("planner");
   }
 
-  async function handleCopyShareLink(sessionId) {
+  async function handleCopyShareLink(sessionId, mode = "view") {
     if (!sessionId) return;
 
-    const shareUrl = buildShareUrl(sessionId);
+    const shareUrl = buildShareUrl(sessionId, mode === "scorer" ? sessionAccess[sessionId] || null : null);
     try {
       await navigator.clipboard.writeText(shareUrl);
-      setShareFeedback({ sessionId, text: "Copied" });
+      setShareFeedback({ sessionId, mode, text: "Copied" });
       window.setTimeout(() => setShareFeedback({ sessionId: null, text: "" }), 2000);
     } catch {
-      setShareFeedback({ sessionId, text: "Failed" });
+      setShareFeedback({ sessionId, mode, text: "Failed" });
       window.setTimeout(() => setShareFeedback({ sessionId: null, text: "" }), 2000);
     }
   }
@@ -540,8 +589,13 @@ export default function App() {
     setSessionLoading(true);
     setError(null);
     try {
-      await deleteSharedSession(sessionId);
+      await deleteSharedSession(sessionId, sessionAccess[sessionId] || null);
       setSessions((current) => current.filter((session) => session.sessionId !== sessionId));
+      setSessionAccess((current) => {
+        const next = { ...current };
+        delete next[sessionId];
+        return next;
+      });
       if (currentSession?.sessionId === sessionId) {
         setCurrentSession(null);
         setSessionIdInUrl(null);
@@ -555,14 +609,15 @@ export default function App() {
   }
 
   async function handleStartRound(stage, roundIndex) {
-    if (!currentSession?.sessionId) return;
+    if (!currentSession?.sessionId || !currentSession.canEdit) return;
 
     try {
       const updated = await startSharedRound(currentSession.sessionId, {
         stage,
         round_index: roundIndex,
-      });
+      }, currentSession.editToken);
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
+      rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
       setError(null);
     } catch (e) {
@@ -571,15 +626,16 @@ export default function App() {
   }
 
   async function handleEndRound(stage, roundIndex) {
-    if (!currentSession?.sessionId) return;
+    if (!currentSession?.sessionId || !currentSession.canEdit) return;
 
     try {
       await flushRoundScoreEdits(currentSession.sessionId, stage, roundIndex);
       const updated = await endSharedRound(currentSession.sessionId, {
         stage,
         round_index: roundIndex,
-      });
+      }, currentSession.editToken);
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
+      rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
       setError(null);
     } catch (e) {
@@ -588,15 +644,16 @@ export default function App() {
   }
 
   async function handleEditRound(stage, roundIndex) {
-    if (!currentSession?.sessionId) return;
+    if (!currentSession?.sessionId || !currentSession.canEdit) return;
 
     try {
       await flushRoundScoreEdits(currentSession.sessionId, stage, roundIndex);
       const updated = await editSharedRound(currentSession.sessionId, {
         stage,
         round_index: roundIndex,
-      });
+      }, currentSession.editToken);
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
+      rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
       setError(null);
     } catch (e) {
@@ -633,12 +690,13 @@ export default function App() {
           court_index: courtIndex,
           team_key: teamKey,
           value: rawValue === "" ? null : Math.max(0, Number.parseInt(rawValue, 10) || 0),
-        });
+        }, currentSession?.editToken || sessionAccess[sessionId] || null);
         if (pendingScoreEditsRef.current[syncKey]?.rawValue === rawValue) {
           delete pendingScoreEditsRef.current[syncKey];
         }
 
         const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
+        rememberSessionAccess(normalized.sessionId, normalized.editToken);
         setCurrentSession(normalized);
         setError(null);
       } catch (e) {
@@ -686,7 +744,7 @@ export default function App() {
   }
 
   function handleScoreChange(stage, roundIndex, courtIndex, teamKey, rawValue) {
-    if (!currentSession?.sessionId) return;
+    if (!currentSession?.sessionId || !currentSession.canEdit) return;
 
     pendingScoreEditsRef.current[getScoreSyncKey(stage, roundIndex, courtIndex, teamKey)] = {
       stage,
@@ -702,7 +760,7 @@ export default function App() {
   }
 
   function handleScoreCommit(stage, roundIndex, courtIndex, teamKey, rawValue) {
-    if (!currentSession?.sessionId) return;
+    if (!currentSession?.sessionId || !currentSession.canEdit) return;
     scheduleScoreSync(currentSession.sessionId, stage, roundIndex, courtIndex, teamKey, rawValue, true);
   }
 
@@ -891,7 +949,8 @@ export default function App() {
                       key={session.sessionId}
                       session={session}
                       isCurrent={session.sessionId === currentSession?.sessionId}
-                      feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback.text : ""}
+                      canScore={Boolean(sessionAccess[session.sessionId])}
+                      feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback : null}
                       onOpen={openSession}
                       onCopy={handleCopyShareLink}
                       onDelete={handleDeleteSession}
@@ -910,6 +969,7 @@ export default function App() {
             roster={currentSession.roster}
             drawConfig={currentSession.drawConfig}
                 sessionName={currentSession.name}
+                canEdit={currentSession.canEdit}
                 leagueScoresByRound={currentSession.leagueScoresByRound}
                 activeLeagueRound={currentSession.activeLeagueRound}
                 endedLeagueRounds={currentSession.endedLeagueRounds}

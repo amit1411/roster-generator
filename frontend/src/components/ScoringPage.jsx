@@ -258,6 +258,7 @@ function RoundList({
   scoresByRound,
   activeRound,
   endedRounds,
+  canEdit,
   stage,
   onStartRound,
   onEndRound,
@@ -311,7 +312,7 @@ function RoundList({
                       ? onEndRound(stage, sourceIndex)
                       : onStartRound(stage, sourceIndex)
                 }
-                disabled={isEnded ? false : isLive ? !canEnd : !canStart}
+                disabled={!canEdit || (isEnded ? false : isLive ? !canEnd : !canStart)}
                 className={`inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 ${
                   isEnded
                     ? "bg-amber-500 hover:bg-amber-600"
@@ -333,7 +334,7 @@ function RoundList({
                   court.team_a.length > 0 &&
                   Array.isArray(court.team_b) &&
                   court.team_b.length > 0;
-                const inputsEnabled = sourceIndex <= activeRound && !isEnded && hasCompleteTeams;
+                const inputsEnabled = canEdit && sourceIndex <= activeRound && !isEnded && hasCompleteTeams;
 
                 return (
                   <div key={courtIndex} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
@@ -452,6 +453,7 @@ export default function ScoringPage({
   roster,
   drawConfig,
   sessionName,
+  canEdit,
   leagueScoresByRound,
   activeLeagueRound,
   endedLeagueRounds,
@@ -533,6 +535,10 @@ export default function ScoringPage({
               <p className="text-indigo-100">Progress</p>
               <p className="font-semibold text-white">{completedRounds} / {totalRounds} rounds ended</p>
             </div>
+            <div className="rounded-xl border border-white/20 bg-white/10 px-4 py-3 text-sm">
+              <p className="text-indigo-100">Access</p>
+              <p className="font-semibold text-white">{canEdit ? "Scorer" : "View Only"}</p>
+            </div>
             <button
               onClick={onBack}
               className="inline-flex min-h-11 items-center justify-center rounded-lg border border-white/25 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/20"
@@ -566,6 +572,7 @@ export default function ScoringPage({
                 scoresByRound={leagueScoresByRound}
                 activeRound={activeLeagueRound}
                 endedRounds={endedLeagueRounds}
+                canEdit={canEdit}
                 stage="league"
                 onStartRound={onStartRound}
                 onEndRound={onEndRound}
@@ -581,6 +588,7 @@ export default function ScoringPage({
                 scoresByRound={leagueScoresByRound}
                 activeRound={activeLeagueRound}
                 endedRounds={endedLeagueRounds}
+                canEdit={canEdit}
                 stage="league"
                 onStartRound={onStartRound}
                 onEndRound={onEndRound}
@@ -596,6 +604,7 @@ export default function ScoringPage({
                 scoresByRound={leagueScoresByRound}
                 activeRound={activeLeagueRound}
                 endedRounds={endedLeagueRounds}
+                canEdit={canEdit}
                 stage="league"
                 onStartRound={onStartRound}
                 onEndRound={onEndRound}
@@ -623,6 +632,7 @@ export default function ScoringPage({
                         scoresByRound={knockoutScoresByRound}
                         activeRound={activeKnockoutRound}
                         endedRounds={endedKnockoutRounds}
+                        canEdit={canEdit}
                         stage="knockout"
                         onStartRound={onStartRound}
                         onEndRound={onEndRound}
@@ -638,6 +648,7 @@ export default function ScoringPage({
                         scoresByRound={knockoutScoresByRound}
                         activeRound={activeKnockoutRound}
                         endedRounds={endedKnockoutRounds}
+                        canEdit={canEdit}
                         stage="knockout"
                         onStartRound={onStartRound}
                         onEndRound={onEndRound}
@@ -653,6 +664,7 @@ export default function ScoringPage({
                         scoresByRound={knockoutScoresByRound}
                         activeRound={activeKnockoutRound}
                         endedRounds={endedKnockoutRounds}
+                        canEdit={canEdit}
                         stage="knockout"
                         onStartRound={onStartRound}
                         onEndRound={onEndRound}

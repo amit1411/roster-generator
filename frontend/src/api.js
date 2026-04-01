@@ -1,5 +1,13 @@
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+function withEditToken(path, editToken) {
+  if (!editToken) return `${API_BASE}${path}`;
+
+  const url = new URL(`${API_BASE}${path}`);
+  url.searchParams.set("edit_token", editToken);
+  return url.toString();
+}
+
 export async function generateRoster(payload) {
   const res = await fetch(`${API_BASE}/api/generate`, {
     method: "POST",
@@ -34,8 +42,8 @@ export async function createSharedSession(payload) {
   return readJson(res);
 }
 
-export async function fetchSharedSession(sessionId) {
-  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`);
+export async function fetchSharedSession(sessionId, editToken) {
+  const res = await fetch(withEditToken(`/api/sessions/${sessionId}`, editToken));
   return readJson(res);
 }
 
@@ -44,8 +52,8 @@ export async function listSharedSessions() {
   return readJson(res);
 }
 
-export async function deleteSharedSession(sessionId) {
-  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}`, {
+export async function deleteSharedSession(sessionId, editToken) {
+  const res = await fetch(withEditToken(`/api/sessions/${sessionId}`, editToken), {
     method: "DELETE",
   });
 
@@ -55,8 +63,8 @@ export async function deleteSharedSession(sessionId) {
   }
 }
 
-export async function startSharedRound(sessionId, payload) {
-  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/start-round`, {
+export async function startSharedRound(sessionId, payload, editToken) {
+  const res = await fetch(withEditToken(`/api/sessions/${sessionId}/start-round`, editToken), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -65,8 +73,8 @@ export async function startSharedRound(sessionId, payload) {
   return readJson(res);
 }
 
-export async function endSharedRound(sessionId, payload) {
-  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/end-round`, {
+export async function endSharedRound(sessionId, payload, editToken) {
+  const res = await fetch(withEditToken(`/api/sessions/${sessionId}/end-round`, editToken), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -83,8 +91,8 @@ export async function undoSharedSession(sessionId) {
   return readJson(res);
 }
 
-export async function editSharedRound(sessionId, payload) {
-  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/edit-round`, {
+export async function editSharedRound(sessionId, payload, editToken) {
+  const res = await fetch(withEditToken(`/api/sessions/${sessionId}/edit-round`, editToken), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -93,8 +101,8 @@ export async function editSharedRound(sessionId, payload) {
   return readJson(res);
 }
 
-export async function updateSharedScore(sessionId, payload) {
-  const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/score`, {
+export async function updateSharedScore(sessionId, payload, editToken) {
+  const res = await fetch(withEditToken(`/api/sessions/${sessionId}/score`, editToken), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),

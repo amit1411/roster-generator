@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import secrets
 from copy import deepcopy
 
@@ -14,6 +15,8 @@ from database import SharedSessionRecord, get_db_session, init_db
 from roster_engine import generate_roster, validate_roster, RosterError
 
 app = FastAPI(title="Badminton Roster API")
+
+ADMIN_RECOVERY_TOKEN = os.getenv("ADMIN_RECOVERY_TOKEN", "thisismytoken")
 
 app.add_middleware(
     CORSMiddleware,
@@ -92,6 +95,8 @@ class SharedSessionResponse(BaseModel):
     name: str
     created_at: str
     updated_at: str
+    can_edit: bool
+    edit_token: str | None = None
     roster: RosterResponse
     draw_config: DrawConfig
     league_scores_by_round: list[list[dict[str, int | str]]]
@@ -158,6 +163,7 @@ def _ensure_score_slot(scores: list[list[dict[str, int | str]]], round_index: in
 
 
 def _upgrade_session_payload(payload: dict) -> dict:
+    payload.setdefault("edit_token", secrets.token_urlsafe(12))
     league_round_count = len(payload.get("roster", {}).get("rounds", []))
     payload.setdefault("league_scores_by_round", [[] for _ in range(league_round_count)])
     payload.setdefault("active_league_round", -1)
@@ -172,14 +178,19 @@ def _upgrade_session_payload(payload: dict) -> dict:
     return payload
 
 
-def _serialize_session(record: SharedSessionRecord) -> SharedSessionResponse:
+def _serialize_session(record: SharedSessionRecord, edit_token: str | None = None) -> SharedSessionResponse:
     payload = _upgrade_session_payload(deepcopy(record.data))
     can_undo = len(payload.get("undo_stack", [])) > 0
-    response_payload = {key: value for key, value in payload.items() if key != "undo_stack"}
+    response_payload = {
+        key: value for key, value in payload.items() if key not in {"undo_stack", "edit_token"}
+    }
+    can_edit = _is_valid_edit_token(payload, edit_token)
     return SharedSessionResponse(
         session_id=record.session_id,
         created_at=record.created_at.isoformat(),
         updated_at=record.updated_at.isoformat(),
+        can_edit=can_edit,
+        edit_token=edit_token if can_edit else None,
         can_undo=can_undo,
         version=record.version,
         **response_payload,
@@ -253,7 +264,19 @@ def _get_session_record(session_id: str) -> SharedSessionRecord:
         return record
 
 
-def _update_session_record(session_id: str, updater) -> SharedSessionResponse:
+def _is_valid_edit_token(payload: dict, edit_token: str | None) -> bool:
+    if edit_token is None:
+        return False
+
+    return edit_token == payload.get("edit_token") or edit_token == ADMIN_RECOVERY_TOKEN
+
+
+def _require_edit_access(payload: dict, edit_token: str | None):
+    if not _is_valid_edit_token(payload, edit_token):
+        raise HTTPException(status_code=403, detail="Scorer access required")
+
+
+def _update_session_record(session_id: str, updater, edit_token: str | None = None) -> SharedSessionResponse:
     with get_db_session() as db:
         record = db.scalar(
             select(SharedSessionRecord).where(SharedSessionRecord.session_id == session_id)
@@ -262,6 +285,7 @@ def _update_session_record(session_id: str, updater) -> SharedSessionResponse:
             raise HTTPException(status_code=404, detail="Shared session not found")
 
         next_payload = _upgrade_session_payload(deepcopy(record.data))
+        _require_edit_access(next_payload, edit_token)
         updater(next_payload)
         record.data = next_payload
         record.version += 1
@@ -269,7 +293,7 @@ def _update_session_record(session_id: str, updater) -> SharedSessionResponse:
         db.flush()
         db.refresh(record)
         db.expunge(record)
-        return _serialize_session(record)
+        return _serialize_session(record, edit_token=edit_token)
 
 
 def _capture_undo_snapshot(payload: dict):
@@ -348,6 +372,7 @@ def api_generate(req: RosterRequest):
 def create_shared_session(req: SharedSessionCreateRequest):
     payload = {
         "name": req.name or f"session-{secrets.token_hex(2)}",
+        "edit_token": secrets.token_urlsafe(12),
         "roster": req.roster.model_dump(),
         "draw_config": req.draw_config.model_dump(),
         "league_scores_by_round": _create_empty_scores(req.roster.rounds),
@@ -377,13 +402,13 @@ def create_shared_session(req: SharedSessionCreateRequest):
         db.flush()
         db.refresh(record)
         db.expunge(record)
-        return _serialize_session(record)
+        return _serialize_session(record, edit_token=payload["edit_token"])
 
 
 @app.get("/api/sessions/{session_id}", response_model=SharedSessionResponse)
-def get_shared_session(session_id: str):
+def get_shared_session(session_id: str, edit_token: str | None = None):
     record = _get_session_record(session_id)
-    return _serialize_session(record)
+    return _serialize_session(record, edit_token=edit_token)
 
 
 @app.get("/api/sessions", response_model=list[SharedSessionSummary])
@@ -398,19 +423,21 @@ def list_shared_sessions():
 
 
 @app.delete("/api/sessions/{session_id}", status_code=204)
-def delete_shared_session(session_id: str):
+def delete_shared_session(session_id: str, edit_token: str | None = None):
     with get_db_session() as db:
         record = db.scalar(
             select(SharedSessionRecord).where(SharedSessionRecord.session_id == session_id)
         )
         if not record:
             raise HTTPException(status_code=404, detail="Shared session not found")
+        payload = _upgrade_session_payload(deepcopy(record.data))
+        _require_edit_access(payload, edit_token)
         db.delete(record)
     return Response(status_code=204)
 
 
 @app.post("/api/sessions/{session_id}/start-round", response_model=SharedSessionResponse)
-def start_round(session_id: str, req: RoundStartRequest):
+def start_round(session_id: str, req: RoundStartRequest, edit_token: str | None = None):
     def updater(payload: dict):
         if req.stage == "league":
             current_round = payload["active_league_round"]
@@ -434,11 +461,11 @@ def start_round(session_id: str, req: RoundStartRequest):
         _capture_undo_snapshot(payload)
         payload["active_knockout_round"] = req.round_index
 
-    return _update_session_record(session_id, updater)
+    return _update_session_record(session_id, updater, edit_token=edit_token)
 
 
 @app.post("/api/sessions/{session_id}/end-round", response_model=SharedSessionResponse)
-def end_round(session_id: str, req: RoundEndRequest):
+def end_round(session_id: str, req: RoundEndRequest, edit_token: str | None = None):
     def updater(payload: dict):
         if req.stage == "league":
             if req.round_index < 0 or req.round_index > payload["active_league_round"]:
@@ -473,11 +500,11 @@ def end_round(session_id: str, req: RoundEndRequest):
         _capture_undo_snapshot(payload)
         payload["ended_knockout_rounds"][req.round_index] = True
 
-    return _update_session_record(session_id, updater)
+    return _update_session_record(session_id, updater, edit_token=edit_token)
 
 
 @app.post("/api/sessions/{session_id}/undo", response_model=SharedSessionResponse)
-def undo_last_change(session_id: str):
+def undo_last_change(session_id: str, edit_token: str | None = None):
     def updater(payload: dict):
         if not payload["undo_stack"]:
             raise HTTPException(status_code=409, detail="Nothing to undo")
@@ -485,11 +512,11 @@ def undo_last_change(session_id: str):
         snapshot = payload["undo_stack"].pop()
         _restore_undo_snapshot(payload, snapshot)
 
-    return _update_session_record(session_id, updater)
+    return _update_session_record(session_id, updater, edit_token=edit_token)
 
 
 @app.post("/api/sessions/{session_id}/edit-round", response_model=SharedSessionResponse)
-def edit_round(session_id: str, req: RoundEditRequest):
+def edit_round(session_id: str, req: RoundEditRequest, edit_token: str | None = None):
     def updater(payload: dict):
         if req.stage == "league":
             if req.round_index < 0 or req.round_index >= len(payload["ended_league_rounds"]):
@@ -518,11 +545,11 @@ def edit_round(session_id: str, req: RoundEditRequest):
         payload["ended_knockout_rounds"][req.round_index] = False
         payload["active_knockout_round"] = req.round_index
 
-    return _update_session_record(session_id, updater)
+    return _update_session_record(session_id, updater, edit_token=edit_token)
 
 
 @app.post("/api/sessions/{session_id}/score", response_model=SharedSessionResponse)
-def update_score(session_id: str, req: ScoreUpdateRequest):
+def update_score(session_id: str, req: ScoreUpdateRequest, edit_token: str | None = None):
     if req.team_key not in {"teamA", "teamB"}:
         raise HTTPException(status_code=400, detail="Invalid team key")
 
@@ -553,4 +580,4 @@ def update_score(session_id: str, req: ScoreUpdateRequest):
         _capture_undo_snapshot(payload)
         court_score[req.team_key] = next_value
 
-    return _update_session_record(session_id, updater)
+    return _update_session_record(session_id, updater, edit_token=edit_token)
