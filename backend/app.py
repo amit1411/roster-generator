@@ -142,6 +142,12 @@ class ScoreUpdateRequest(BaseModel):
     value: int | None = None
 
 
+class BatchScoreUpdateRequest(BaseModel):
+    stage: str
+    round_index: int
+    updates: list[ScoreUpdateRequest]
+
+
 class RoundEndRequest(BaseModel):
     stage: str
     round_index: int
@@ -150,6 +156,11 @@ class RoundEndRequest(BaseModel):
 class RoundEditRequest(BaseModel):
     stage: str
     round_index: int
+
+
+class ScoreMutationResponse(BaseModel):
+    ok: bool = True
+    version: int
 
 
 def _create_empty_scores(rounds: list[RoundResult]) -> list[list[dict[str, int | str]]]:
@@ -465,7 +476,58 @@ def _get_score_record(db, session_id: str, stage: str, round_index: int, court_i
     return db.get(SessionScoreRecord, (session_id, stage, round_index, court_index))
 
 
-def _update_session_record(session_id: str, updater, edit_token: str | None = None) -> SharedSessionResponse:
+def _validate_score_target(db, session_id: str, payload: dict, stage: str, round_index: int, court_index: int):
+    if stage not in {"league", "knockout"}:
+        raise HTTPException(status_code=400, detail="Invalid stage")
+
+    if stage == "league":
+        rounds = payload.get("roster", {}).get("rounds", [])
+        if round_index < 0 or round_index >= len(rounds):
+            raise HTTPException(status_code=400, detail="Invalid round or court index")
+        court_count = len(rounds[round_index].get("courts", []))
+        if court_index < 0 or court_index >= court_count:
+            raise HTTPException(status_code=400, detail="Invalid round or court index")
+
+    round_record = db.get(SessionRoundRecord, (session_id, stage, round_index))
+    if round_record and round_record.ended:
+        raise HTTPException(status_code=409, detail="Round is locked after being ended")
+
+
+def _apply_score_update(db, session_id: str, payload: dict, req: ScoreUpdateRequest):
+    if req.team_key not in {"teamA", "teamB"}:
+        raise HTTPException(status_code=400, detail="Invalid team key")
+
+    _validate_score_target(db, session_id, payload, req.stage, req.round_index, req.court_index)
+
+    next_value = "" if req.value is None else req.value
+    score_record = _get_score_record(db, session_id, req.stage, req.round_index, req.court_index)
+    current_value = ""
+    if score_record:
+        current_value = score_record.team_a_score if req.team_key == "teamA" else score_record.team_b_score
+        current_value = "" if current_value is None else current_value
+
+    if current_value == next_value:
+        return False
+
+    if not score_record:
+        score_record = SessionScoreRecord(
+            session_id=session_id,
+            stage=req.stage,
+            round_index=req.round_index,
+            court_index=req.court_index,
+            team_a_score=None,
+            team_b_score=None,
+        )
+
+    if req.team_key == "teamA":
+        score_record.team_a_score = None if next_value == "" else int(next_value)
+    else:
+        score_record.team_b_score = None if next_value == "" else int(next_value)
+    db.add(score_record)
+    return True
+
+
+def _update_session_record(session_id: str, updater, edit_token: str | None = None, response_builder=None):
     for attempt in range(3):
         try:
             with get_db_session() as db:
@@ -482,16 +544,22 @@ def _update_session_record(session_id: str, updater, edit_token: str | None = No
                 _require_edit_access(next_payload, edit_token)
                 changed = updater(db, record, next_payload)
                 if changed is False:
-                    db.expunge(record)
-                    return _serialize_session(record, edit_token=edit_token, db=db)
+                    return (
+                        response_builder(record, db)
+                        if response_builder
+                        else _serialize_session(record, edit_token=edit_token, db=db)
+                    )
 
                 record.data = next_payload
                 record.version += 1
                 db.add(record)
                 db.flush()
                 db.refresh(record)
-                db.expunge(record)
-                return _serialize_session(record, edit_token=edit_token, db=db)
+                return (
+                    response_builder(record, db)
+                    if response_builder
+                    else _serialize_session(record, edit_token=edit_token, db=db)
+                )
         except OperationalError as exc:
             message = str(exc).lower()
             if "statement timeout" not in message or attempt == 2:
@@ -780,52 +848,33 @@ def edit_round(session_id: str, req: RoundEditRequest, edit_token: str | None = 
     return _update_session_record(session_id, updater, edit_token=edit_token)
 
 
-@app.post("/api/sessions/{session_id}/score", response_model=SharedSessionResponse)
+@app.post("/api/sessions/{session_id}/score", response_model=ScoreMutationResponse)
 def update_score(session_id: str, req: ScoreUpdateRequest, edit_token: str | None = None):
-    if req.team_key not in {"teamA", "teamB"}:
-        raise HTTPException(status_code=400, detail="Invalid team key")
-
     def updater(db, record, payload: dict):
-        if req.stage not in {"league", "knockout"}:
-            raise HTTPException(status_code=400, detail="Invalid stage")
+        return _apply_score_update(db, session_id, payload, req)
 
-        if req.stage == "league":
-            rounds = payload.get("roster", {}).get("rounds", [])
-            if req.round_index < 0 or req.round_index >= len(rounds):
-                raise HTTPException(status_code=400, detail="Invalid round or court index")
-            court_count = len(rounds[req.round_index].get("courts", []))
-            if req.court_index < 0 or req.court_index >= court_count:
-                raise HTTPException(status_code=400, detail="Invalid round or court index")
+    return _update_session_record(
+        session_id,
+        updater,
+        edit_token=edit_token,
+        response_builder=lambda record, db: ScoreMutationResponse(version=record.version),
+    )
 
-        round_record = db.get(SessionRoundRecord, (session_id, req.stage, req.round_index))
-        if round_record and round_record.ended:
-            raise HTTPException(status_code=409, detail="Round is locked after being ended")
 
-        next_value = "" if req.value is None else req.value
-        score_record = _get_score_record(db, session_id, req.stage, req.round_index, req.court_index)
-        current_value = ""
-        if score_record:
-            current_value = score_record.team_a_score if req.team_key == "teamA" else score_record.team_b_score
-            current_value = "" if current_value is None else current_value
+@app.post("/api/sessions/{session_id}/scores/batch", response_model=ScoreMutationResponse)
+def update_scores_batch(session_id: str, req: BatchScoreUpdateRequest, edit_token: str | None = None):
+    def updater(db, record, payload: dict):
+        changed = False
+        for update in req.updates:
+            if update.stage != req.stage or update.round_index != req.round_index:
+                raise HTTPException(status_code=400, detail="Batch updates must target the same stage and round")
+            if _apply_score_update(db, session_id, payload, update):
+                changed = True
+        return changed
 
-        if current_value == next_value:
-            return False
-
-        if not score_record:
-            score_record = SessionScoreRecord(
-                session_id=session_id,
-                stage=req.stage,
-                round_index=req.round_index,
-                court_index=req.court_index,
-                team_a_score=None,
-                team_b_score=None,
-            )
-
-        if req.team_key == "teamA":
-            score_record.team_a_score = None if next_value == "" else int(next_value)
-        else:
-            score_record.team_b_score = None if next_value == "" else int(next_value)
-        db.add(score_record)
-        return True
-
-    return _update_session_record(session_id, updater, edit_token=edit_token)
+    return _update_session_record(
+        session_id,
+        updater,
+        edit_token=edit_token,
+        response_builder=lambda record, db: ScoreMutationResponse(version=record.version),
+    )
