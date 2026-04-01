@@ -346,6 +346,29 @@ function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, o
   );
 }
 
+function PlannerStepCard({ step, title, description, tone = "default", children }) {
+  const tones = {
+    default: "border-gray-200 bg-white",
+    indigo: "border-indigo-200 bg-indigo-50",
+    slate: "border-slate-200 bg-slate-900 text-white",
+  };
+
+  const descriptionTone = tone === "slate" ? "text-slate-300" : "text-gray-600";
+  const stepTone = tone === "slate" ? "text-slate-300" : "text-gray-500";
+  const titleTone = tone === "slate" ? "text-white" : "text-gray-900";
+
+  return (
+    <section className={`rounded-2xl border p-5 shadow-sm ${tones[tone]}`}>
+      <div className="mb-4">
+        <p className={`text-sm font-semibold uppercase tracking-wide ${stepTone}`}>{step}</p>
+        <h3 className={`mt-1 text-lg font-semibold ${titleTone}`}>{title}</h3>
+        <p className={`mt-2 text-sm ${descriptionTone}`}>{description}</p>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export default function App() {
   const plannerState = readStorage(PLANNER_STORAGE_KEY, null);
   const savedSession = readStorage(SESSION_STORAGE_KEY, null);
@@ -837,14 +860,11 @@ export default function App() {
 
             <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(320px,1fr)_minmax(0,1.55fr)]">
               <div className="space-y-6 xl:sticky xl:top-24 xl:self-start">
-                <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                  <div className="mb-4">
-                    <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Step 1</p>
-                    <h3 className="mt-1 text-lg font-semibold text-gray-900">Configure the draw</h3>
-                    <p className="mt-2 text-sm text-gray-600">
-                      Keep this column focused on setup. Once the roster is generated, the review panel on the right becomes the next step.
-                    </p>
-                  </div>
+                <PlannerStepCard
+                  step="Step 1"
+                  title="Players and format"
+                  description="Add players, choose the format, and adjust the settings."
+                >
                   <div className="space-y-6">
                     <PlayerInput
                       players={players}
@@ -859,7 +879,7 @@ export default function App() {
                       fixedPairs={fixedPairs}
                     />
                   </div>
-                </div>
+                </PlannerStepCard>
               </div>
 
               <div>
@@ -878,13 +898,16 @@ export default function App() {
                   </div>
                 ) : roster ? (
                   <div className="space-y-4">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
+                    <PlannerStepCard
+                      step="Step 2"
+                      title="Review the generated roster"
+                      description="Check the rounds and courts, then start the session when ready."
+                      tone="slate"
+                    >
                       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                         <div>
-                          <p className="text-sm font-medium text-slate-200">Step 2</p>
-                          <h3 className="mt-1 text-lg font-semibold">Generated roster is ready to review</h3>
-                          <p className="mt-2 text-sm text-slate-300">
-                            Review the schedule below. If everything looks good, lock it into a shared session.
+                          <p className="text-sm text-slate-300">
+                            Review the schedule below before locking the roster.
                           </p>
                         </div>
                         <button
@@ -895,44 +918,47 @@ export default function App() {
                           {sessionLoading ? "Creating Session..." : "Step 3: Lock Roster and Start Session"}
                         </button>
                       </div>
-                    </div>
+                    </PlannerStepCard>
                     <RosterTable data={roster} fixedPairs={fixedPairs} />
                   </div>
                 ) : (
-                  <div className="rounded-2xl border border-dashed border-gray-300 bg-white p-12 text-center shadow-sm">
+                  <PlannerStepCard
+                    step="Step 2"
+                    title="Generate and review"
+                    description="Generate a roster to preview the rounds and courts here."
+                  >
                     <div className="text-gray-300 mb-4">
                       <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                       </svg>
                     </div>
-                    <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Step 2</p>
                     <p className="mt-2 text-gray-700 font-medium">Generate a roster to review it here</p>
-                    <p className="text-gray-400 text-sm mt-1">
-                      This panel stays focused on the output, so creation and management do not compete for attention.
-                    </p>
-                  </div>
+                    <p className="text-gray-400 text-sm mt-1">Your generated rounds will appear here.</p>
+                  </PlannerStepCard>
                 )}
               </div>
             </section>
 
-            <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <details className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm" open={sessions.length > 0}>
+              <summary className="flex cursor-pointer list-none flex-col gap-4 md:flex-row md:items-start md:justify-between">
                 <div>
                   <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Existing Sessions</p>
                   <h2 className="mt-1 text-lg font-semibold text-gray-900">Resume, share, or clean up saved sessions</h2>
-                  <p className="mt-2 text-sm text-gray-600">
-                    Session management stays below the creation flow so it is available when needed without crowding the generator.
-                  </p>
+                  <p className="mt-2 text-sm text-gray-600">Open an existing session or remove one you no longer need.</p>
                 </div>
                 <button
-                  onClick={loadSessions}
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    loadSessions();
+                  }}
                   disabled={sessionsLoading}
                   className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
                 >
                   {sessionsLoading ? "Refreshing..." : "Refresh Sessions"}
                 </button>
-              </div>
-              <div className="mt-4 space-y-3">
+              </summary>
+              <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
                 {sessions.length > 0 ? (
                   sessions.map((session) => (
                     <SessionCard
@@ -952,7 +978,7 @@ export default function App() {
                   </div>
                 )}
               </div>
-            </section>
+            </details>
           </div>
         ) : currentSession ? (
           <ScoringPage
