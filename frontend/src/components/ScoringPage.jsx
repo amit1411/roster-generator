@@ -333,19 +333,32 @@ function TournamentSummary({
 
       {isKnockout ? <ChampionCard winner={champion} /> : null}
 
-      <div className="grid gap-6 xl:grid-cols-2">
-        <RankingTable
+      <div className="space-y-6">
+        <CollapsibleSection
           title="Final League Pair Rankings"
-          emptyText="League pair rankings will appear after completed rounds."
-          label="Pair"
-          standings={pairStandings}
-        />
-        <RankingTable
+          description="Based on completed league rounds only. Playoff matches do not change this table."
+          count={pairStandings.length}
+        >
+          <RankingTable
+            title="Final League Pair Rankings"
+            emptyText="League pair rankings will appear after completed rounds."
+            label="Pair"
+            standings={pairStandings}
+          />
+        </CollapsibleSection>
+
+        <CollapsibleSection
           title="Final League Individual Rankings"
-          emptyText="League individual rankings will appear after completed rounds."
-          label="Player"
-          standings={individualStandings}
-        />
+          description="Based on completed league rounds only. Playoff matches do not change this table."
+          count={individualStandings.length}
+        >
+          <RankingTable
+            title="Final League Individual Rankings"
+            emptyText="League individual rankings will appear after completed rounds."
+            label="Player"
+            standings={individualStandings}
+          />
+        </CollapsibleSection>
       </div>
     </div>
   );
