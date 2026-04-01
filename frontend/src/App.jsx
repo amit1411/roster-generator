@@ -434,6 +434,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState(null);
+  const [generateError, setGenerateError] = useState(null);
   const [currentSession, setCurrentSession] = useState(normalizeSession(savedSession));
   const [view, setView] = useState(initialView);
   const [plannerMode, setPlannerMode] = useState("generate");
@@ -444,6 +445,7 @@ export default function App() {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [shareFeedback, setShareFeedback] = useState({ sessionId: null, text: "" });
   const timerRef = useRef(null);
+  const reviewStepRef = useRef(null);
   const scoreSyncTimeoutsRef = useRef({});
   const pendingScoreEditsRef = useRef({});
   const scoreMutationQueueRef = useRef(Promise.resolve());
@@ -550,14 +552,18 @@ export default function App() {
   async function handleGenerate() {
     setLoading(true);
     setError(null);
+    setGenerateError(null);
     try {
       const result = await generateRoster(getLeagueRequestPayload(players, fixedPairs, config));
       setRoster(result);
       setPlannerStep(3);
       setView("planner");
     } catch (e) {
-      setError(e.message);
+      setGenerateError(e.message);
       setRoster(null);
+      window.setTimeout(() => {
+        reviewStepRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 0);
     } finally {
       setLoading(false);
     }
@@ -645,10 +651,12 @@ export default function App() {
   }
 
   function showGenerateMode() {
+    setGenerateError(null);
     setPlannerMode("generate");
   }
 
   function showSessionsMode() {
+    setGenerateError(null);
     setPlannerMode("sessions");
   }
 
@@ -981,7 +989,7 @@ export default function App() {
                 ) : null}
 
                 {plannerStep === 3 ? (
-                  <div className="space-y-4">
+                  <div ref={reviewStepRef} className="space-y-4">
                     <PlannerStepCard
                       step="Step 3"
                       title="Review and start"
@@ -1003,6 +1011,14 @@ export default function App() {
                         </div>
                       ) : (
                         <div className="space-y-4">
+                          {generateError ? (
+                            <div className={`rounded-xl border px-4 py-3 text-sm ${
+                              roster ? "border-rose-300 bg-rose-50 text-rose-700" : "border-rose-200 bg-rose-50 text-rose-700"
+                            }`}>
+                              <p className="font-semibold">Roster could not be generated</p>
+                              <p className="mt-1">{generateError}</p>
+                            </div>
+                          ) : null}
                           <p className={`text-sm ${roster ? "text-slate-300" : "text-gray-600"}`}>
                             {roster ? "The latest generated roster is ready to review below." : "Generate a roster to preview the rounds and courts here."}
                           </p>

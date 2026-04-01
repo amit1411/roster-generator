@@ -106,6 +106,15 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
     setDraftValues((current) => ({ ...current, [key]: rawValue }));
   }
 
+  function adjustNumericValue(key, min, max, delta) {
+    const currentValue = Number.parseInt(draftValues[key], 10);
+    const fallbackValue = Number.parseInt(config[key], 10);
+    const baseValue = Number.isNaN(currentValue) ? fallbackValue : currentValue;
+    const nextValue = Math.min(max, Math.max(min, baseValue + delta));
+    update(key, nextValue);
+    setDraftValues((current) => ({ ...current, [key]: String(nextValue) }));
+  }
+
   function commitNumericValue(key, min, max) {
     const rawValue = draftValues[key];
     if (rawValue === "") {
@@ -176,6 +185,51 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
     const next = { ...config.limits };
     delete next[player];
     update("limits", next);
+  }
+
+  function NumericField({ fieldKey, label, min, max, hint }) {
+    return (
+      <div>
+        <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
+          {label}
+          <span className="relative group">
+            <svg className="w-3.5 h-3.5 text-gray-400 hover:text-indigo-500 transition-colors cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 text-xs text-white bg-gray-800 rounded-md shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-20">
+              {hint}
+            </span>
+          </span>
+        </label>
+        <div className="flex items-stretch gap-2">
+          <button
+            type="button"
+            onClick={() => adjustNumericValue(fieldKey, min, max, -1)}
+            className="inline-flex min-h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-lg font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+            aria-label={`Decrease ${label}`}
+          >
+            -
+          </button>
+          <input
+            type="number"
+            min={min}
+            max={max}
+            value={draftValues[fieldKey]}
+            onChange={(e) => updateNumericDraft(fieldKey, e.target.value)}
+            onBlur={() => commitNumericValue(fieldKey, min, max)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-3 text-center text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+          <button
+            type="button"
+            onClick={() => adjustNumericValue(fieldKey, min, max, 1)}
+            className="inline-flex min-h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-lg font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+            aria-label={`Increase ${label}`}
+          >
+            +
+          </button>
+        </div>
+      </div>
+    );
   }
 
   const fields = [
@@ -332,28 +386,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
 
       <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-2">
         {primaryFields.map(({ key, label, min, max, hint }) => (
-          <div key={key}>
-            <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
-              {label}
-              <span className="relative group">
-                <svg className="w-3.5 h-3.5 text-gray-400 hover:text-indigo-500 transition-colors cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 text-xs text-white bg-gray-800 rounded-md shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-20">
-                  {hint}
-                </span>
-              </span>
-            </label>
-            <input
-              type="number"
-              min={min}
-              max={max}
-              value={draftValues[key]}
-              onChange={(e) => updateNumericDraft(key, e.target.value)}
-              onBlur={() => commitNumericValue(key, min, max)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-          </div>
+          <NumericField key={key} fieldKey={key} label={label} min={min} max={max} hint={hint} />
         ))}
       </div>
 
@@ -373,28 +406,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
         <div className="mt-4 space-y-5 border-t border-gray-200 pt-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {advancedFields.map(({ key, label, min, max, hint }) => (
-              <div key={key}>
-                <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
-                  {label}
-                  <span className="relative group">
-                    <svg className="w-3.5 h-3.5 text-gray-400 hover:text-indigo-500 transition-colors cursor-help" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 px-2.5 py-1.5 text-xs text-white bg-gray-800 rounded-md shadow-lg whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity z-20">
-                      {hint}
-                    </span>
-                  </span>
-                </label>
-                <input
-                  type="number"
-                  min={min}
-                  max={max}
-                  value={draftValues[key]}
-                  onChange={(e) => updateNumericDraft(key, e.target.value)}
-                  onBlur={() => commitNumericValue(key, min, max)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              </div>
+              <NumericField key={key} fieldKey={key} label={label} min={min} max={max} hint={hint} />
             ))}
             <div>
               <label className="flex items-center gap-1.5 text-xs font-medium text-gray-600 mb-1">
