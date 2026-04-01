@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import PlayerInput from "./components/PlayerInput";
 import ConfigPanel from "./components/ConfigPanel";
 import RosterTable from "./components/RosterTable";
-import DownloadCSV from "./components/DownloadCSV";
 import ScoringPage from "./components/ScoringPage";
 import {
   createSharedSession,
@@ -764,20 +763,14 @@ export default function App() {
     scheduleScoreSync(currentSession.sessionId, stage, roundIndex, courtIndex, teamKey, rawValue, true);
   }
 
-  const downloadData = currentSession?.roster || roster;
-
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">Badminton Roster</h1>
-            <p className="text-sm text-gray-500">
-              {view === "planner" ? "Generate balanced doubles matchups" : "Start rounds and record scores"}
-            </p>
+            <h1 className="text-xl font-bold text-gray-900">Badminton</h1>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-            {downloadData && <DownloadCSV data={downloadData} />}
             {view === "planner" ? (
               <button
                 onClick={handleGenerate}
@@ -792,14 +785,7 @@ export default function App() {
                 )}
                 {loading ? loadingText() : roster ? "Regenerate Roster" : "Generate Roster"}
               </button>
-            ) : (
-              <button
-                onClick={handleBackToPlanner}
-                className="w-full sm:w-auto px-5 py-2.5 bg-white text-gray-700 text-sm font-semibold rounded-lg border border-gray-300 hover:bg-gray-50 transition-colors"
-              >
-                Edit Roster
-              </button>
-            )}
+            ) : null}
           </div>
         </div>
       </header>
