@@ -283,6 +283,14 @@ function SummaryMetric({ label, value, tone = "default" }) {
   );
 }
 
+function SummaryCallout({ children }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 shadow-sm">
+      {children}
+    </div>
+  );
+}
+
 function TournamentSummary({
   drawConfig,
   sessionName,
@@ -314,22 +322,27 @@ function TournamentSummary({
           tone="indigo"
         />
         <SummaryMetric label="Rounds Completed" value={`${completedRounds} / ${totalRounds}`} tone="emerald" />
-        <SummaryMetric label="Top Pair" value={topPair ? topPair[0] : "No pair standings yet"} tone="amber" />
-        <SummaryMetric label="Top Individual" value={topPlayer ? topPlayer[0] : "No individual standings yet"} />
+        <SummaryMetric label="Top Pair In League" value={topPair ? topPair[0] : "No league pair standings yet"} tone="amber" />
+        <SummaryMetric label="Top Individual In League" value={topPlayer ? topPlayer[0] : "No league player standings yet"} />
       </div>
+
+      <SummaryCallout>
+        League standings are based on completed league rounds only. Playoff matches decide the champion, but they do not
+        change the league table.
+      </SummaryCallout>
 
       {isKnockout ? <ChampionCard winner={champion} /> : null}
 
       <div className="grid gap-6 xl:grid-cols-2">
         <RankingTable
-          title="Final Pair Rankings"
-          emptyText="Pair rankings will appear after completed rounds."
+          title="Final League Pair Rankings"
+          emptyText="League pair rankings will appear after completed rounds."
           label="Pair"
           standings={pairStandings}
         />
         <RankingTable
-          title="Final Individual Rankings"
-          emptyText="Individual rankings will appear after completed rounds."
+          title="Final League Individual Rankings"
+          emptyText="League individual rankings will appear after completed rounds."
           label="Player"
           standings={individualStandings}
         />
@@ -876,27 +889,27 @@ export default function ScoringPage({
           </div>
 
           <CollapsibleSection
-            title="Pair Rankings"
-            description="Pair standings update after a round is ended."
+            title="League Pair Rankings"
+            description="Based on completed league rounds only. Playoff matches do not change this table."
             count={pairStandings.length}
             defaultOpen
           >
             <RankingTable
-              title="Pair Rankings"
-              emptyText="Pair rankings will appear only after a pair has completed a match in an ended round."
+              title="League Pair Rankings"
+              emptyText="League pair rankings will appear only after a pair has completed a match in an ended round."
               label="Pair"
               standings={pairStandings}
             />
           </CollapsibleSection>
 
           <CollapsibleSection
-            title="Individual Rankings"
-            description="Individual standings update after a round is ended."
+            title="League Individual Rankings"
+            description="Based on completed league rounds only. Playoff matches do not change this table."
             count={individualStandings.length}
           >
             <RankingTable
-              title="Individual Rankings"
-              emptyText="Individual rankings will appear once an ended round is available."
+              title="League Individual Rankings"
+              emptyText="League individual rankings will appear once an ended round is available."
               label="Player"
               standings={individualStandings}
             />
