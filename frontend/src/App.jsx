@@ -38,8 +38,8 @@ const PLANNER_STORAGE_KEY = "badminton-roster:planner";
 const SESSION_STORAGE_KEY = "badminton-roster:session";
 const SESSION_ACCESS_STORAGE_KEY = "badminton-roster:session-access";
 const VIEW_STORAGE_KEY = "badminton-roster:view";
-const SESSION_POLL_INTERVAL_MS = 5000;
-const SCORE_SYNC_DELAY_MS = 450;
+const SESSION_POLL_INTERVAL_MS = 12000;
+const ACTIVE_EDIT_GRACE_MS = 15000;
 
 const DEFAULT_CONFIG = {
   num_courts: 5,
@@ -446,9 +446,9 @@ export default function App() {
   const [shareFeedback, setShareFeedback] = useState({ sessionId: null, text: "" });
   const timerRef = useRef(null);
   const reviewStepRef = useRef(null);
-  const scoreSyncTimeoutsRef = useRef({});
   const pendingScoreEditsRef = useRef({});
   const scoreMutationQueueRef = useRef(Promise.resolve());
+  const lastLocalEditAtRef = useRef(0);
 
   useEffect(() => {
     if (loading) {
@@ -513,6 +513,9 @@ export default function App() {
     if (!currentSession?.sessionId) return;
 
     const intervalId = window.setInterval(async () => {
+      if (Object.keys(pendingScoreEditsRef.current).length > 0) return;
+      if (Date.now() - lastLocalEditAtRef.current < ACTIVE_EDIT_GRACE_MS) return;
+
       try {
         const latest = mergePendingScoreEdits(
           normalizeSession(await fetchSharedSession(currentSession.sessionId, currentSession.editToken)),
@@ -535,13 +538,6 @@ export default function App() {
       setView("planner");
     }
   }, [view, currentSession, sessionLoading]);
-
-  useEffect(() => {
-    const pendingTimeouts = scoreSyncTimeoutsRef.current;
-    return () => {
-      Object.values(pendingTimeouts).forEach((timeoutId) => window.clearTimeout(timeoutId));
-    };
-  }, []);
 
   function enqueueScoreMutation(task) {
     const nextOperation = scoreMutationQueueRef.current.then(task, task);
@@ -807,41 +803,15 @@ export default function App() {
       edit.stage === stage && edit.roundIndex === roundIndex
     );
 
-    pendingEntries.forEach(([syncKey]) => {
-      const existingTimeout = scoreSyncTimeoutsRef.current[syncKey];
-      if (existingTimeout) {
-        window.clearTimeout(existingTimeout);
-        delete scoreSyncTimeoutsRef.current[syncKey];
-      }
-    });
-
     for (const [, edit] of pendingEntries) {
       await pushScoreUpdate(sessionId, stage, roundIndex, edit.courtIndex, edit.teamKey, edit.rawValue);
     }
   }
 
-  function scheduleScoreSync(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue, immediate = false) {
-    const syncKey = getScoreSyncKey(stage, roundIndex, courtIndex, teamKey);
-    const existingTimeout = scoreSyncTimeoutsRef.current[syncKey];
-    if (existingTimeout) {
-      window.clearTimeout(existingTimeout);
-      delete scoreSyncTimeoutsRef.current[syncKey];
-    }
-
-    if (immediate) {
-      pushScoreUpdate(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue);
-      return;
-    }
-
-    scoreSyncTimeoutsRef.current[syncKey] = window.setTimeout(() => {
-      delete scoreSyncTimeoutsRef.current[syncKey];
-      pushScoreUpdate(sessionId, stage, roundIndex, courtIndex, teamKey, rawValue);
-    }, SCORE_SYNC_DELAY_MS);
-  }
-
   function handleScoreChange(stage, roundIndex, courtIndex, teamKey, rawValue) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
 
+    lastLocalEditAtRef.current = Date.now();
     pendingScoreEditsRef.current[getScoreSyncKey(stage, roundIndex, courtIndex, teamKey)] = {
       stage,
       roundIndex,
@@ -852,12 +822,11 @@ export default function App() {
     setCurrentSession((current) =>
       applyLocalScoreChange(current, stage, roundIndex, courtIndex, teamKey, rawValue)
     );
-    scheduleScoreSync(currentSession.sessionId, stage, roundIndex, courtIndex, teamKey, rawValue);
   }
 
   function handleScoreCommit(stage, roundIndex, courtIndex, teamKey, rawValue) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
-    scheduleScoreSync(currentSession.sessionId, stage, roundIndex, courtIndex, teamKey, rawValue, true);
+    pushScoreUpdate(currentSession.sessionId, stage, roundIndex, courtIndex, teamKey, rawValue);
   }
 
   const canContinueFromPlayers = players.length >= 4;

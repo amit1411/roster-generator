@@ -397,6 +397,19 @@ function RoundList({
         const isEnded = endedRounds[sourceIndex];
         const isLive = status === "live";
         const canEnd = isLive && roundScores.every(isScoreComplete);
+        const actionLabel = isEnded ? "Edit Scores" : isLive ? "End Round" : "Start Round";
+        const actionClassName = isEnded
+          ? "bg-amber-500 hover:bg-amber-600"
+          : isLive
+            ? "bg-rose-600 hover:bg-rose-700"
+            : "bg-indigo-600 hover:bg-indigo-700";
+        const actionDisabled = !canEdit || (isEnded ? false : isLive ? !canEnd : !canStart);
+        const handleRoundAction = () =>
+          isEnded
+            ? onEditRound(stage, sourceIndex)
+            : isLive
+              ? onEndRound(stage, sourceIndex)
+              : onStartRound(stage, sourceIndex);
 
         return (
           <section
@@ -416,25 +429,23 @@ function RoundList({
                   {round.resting?.length > 0 ? ` • Resting: ${round.resting.join(", ")}` : " • No one resting"}
                 </p>
               </div>
-              <button
-                onClick={() =>
-                  isEnded
-                    ? onEditRound(stage, sourceIndex)
-                    : isLive
-                      ? onEndRound(stage, sourceIndex)
-                      : onStartRound(stage, sourceIndex)
-                }
-                disabled={!canEdit || (isEnded ? false : isLive ? !canEnd : !canStart)}
-                className={`inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 ${
-                  isEnded
-                    ? "bg-amber-500 hover:bg-amber-600"
-                    : isLive
-                      ? "bg-rose-600 hover:bg-rose-700"
-                      : "bg-indigo-600 hover:bg-indigo-700"
-                }`}
-              >
-                {isEnded ? "Edit Scores" : isLive ? "End Round" : "Start Round"}
-              </button>
+              {isLive ? (
+                <button
+                  onClick={handleRoundAction}
+                  disabled={actionDisabled}
+                  className={`hidden min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 md:inline-flex ${actionClassName}`}
+                >
+                  {actionLabel}
+                </button>
+              ) : (
+                <button
+                  onClick={handleRoundAction}
+                  disabled={actionDisabled}
+                  className={`inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 ${actionClassName}`}
+                >
+                  {actionLabel}
+                </button>
+              )}
             </div>
 
             <div className="space-y-4 p-4 sm:p-5">
@@ -504,6 +515,18 @@ function RoundList({
                   </div>
                 );
               })}
+
+              {isLive ? (
+                <div className="md:hidden">
+                  <button
+                    onClick={handleRoundAction}
+                    disabled={actionDisabled}
+                    className={`inline-flex min-h-11 w-full items-center justify-center rounded-lg px-4 py-3 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 ${actionClassName}`}
+                  >
+                    End Round and Update Rankings
+                  </button>
+                </div>
+              ) : null}
             </div>
           </section>
         );
@@ -718,151 +741,136 @@ export default function ScoringPage({
 
       {activePanel === "matches" ? (
         <div className="space-y-6">
-          <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-            <div className="space-y-5">
-              <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
-                <p className="text-sm font-semibold uppercase tracking-wide text-indigo-700">Current Focus</p>
-                <h3 className="mt-1 text-lg font-semibold text-gray-900">
-                  {liveLeagueRounds.length > 0 || liveKnockoutRounds.length > 0
-                    ? "Live rounds stay expanded so score entry is always in reach."
-                    : nextRoundLabel
-                      ? `Start ${nextRoundLabel} when you are ready.`
-                      : "All rounds have been started."}
-                </h3>
-              </div>
-
-              <RoundList
-                title="Live League Rounds"
-                rounds={liveLeagueRounds}
-                scoresByRound={leagueScoresByRound}
-                activeRound={activeLeagueRound}
-                endedRounds={endedLeagueRounds}
-                canEdit={canEdit}
-                stage="league"
-                onStartRound={onStartRound}
-                onEndRound={onEndRound}
-                onEditRound={onEditRound}
-                onScoreChange={onScoreChange}
-                onScoreCommit={onScoreCommit}
-              />
-
-              <CollapsibleRoundGroup
-                title="Upcoming League Rounds"
-                description="Start these later as courts free up."
-                rounds={pendingLeagueRounds}
-                scoresByRound={leagueScoresByRound}
-                activeRound={activeLeagueRound}
-                endedRounds={endedLeagueRounds}
-                canEdit={canEdit}
-                stage="league"
-                onStartRound={onStartRound}
-                onEndRound={onEndRound}
-                onEditRound={onEditRound}
-                onScoreChange={onScoreChange}
-                onScoreCommit={onScoreCommit}
-              />
-
-              <CollapsibleRoundGroup
-                title="Completed League Rounds"
-                description="Review finished league results without crowding the live workflow."
-                rounds={endedLeagueOnlyRounds}
-                scoresByRound={leagueScoresByRound}
-                activeRound={activeLeagueRound}
-                endedRounds={endedLeagueRounds}
-                canEdit={canEdit}
-                stage="league"
-                onStartRound={onStartRound}
-                onEndRound={onEndRound}
-                onEditRound={onEditRound}
-                onScoreChange={onScoreChange}
-                onScoreCommit={onScoreCommit}
-              />
-
-              {hasBracket ? (
-                <div className="space-y-5">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
-                    <p className="text-sm font-medium text-slate-200">Playoff Stage</p>
-                    <h3 className="mt-1 text-lg font-semibold">
-                      {leagueComplete
-                        ? "League table locked. Knockout rounds are ready below."
-                        : "End each league round to unlock the playoff stage."}
-                    </h3>
-                  </div>
-
-                  {knockoutRounds.length > 0 ? (
-                    <>
-                      <RoundList
-                        title="Live Knockout Rounds"
-                        rounds={liveKnockoutRounds}
-                        scoresByRound={knockoutScoresByRound}
-                        activeRound={activeKnockoutRound}
-                        endedRounds={endedKnockoutRounds}
-                        canEdit={canEdit}
-                        stage="knockout"
-                        onStartRound={onStartRound}
-                        onEndRound={onEndRound}
-                        onEditRound={onEditRound}
-                        onScoreChange={onScoreChange}
-                        onScoreCommit={onScoreCommit}
-                      />
-
-                      <CollapsibleRoundGroup
-                        title="Upcoming Knockout Rounds"
-                        description="Future playoff rounds stay tucked away until they matter."
-                        rounds={pendingKnockoutRounds}
-                        scoresByRound={knockoutScoresByRound}
-                        activeRound={activeKnockoutRound}
-                        endedRounds={endedKnockoutRounds}
-                        canEdit={canEdit}
-                        stage="knockout"
-                        onStartRound={onStartRound}
-                        onEndRound={onEndRound}
-                        onEditRound={onEditRound}
-                        onScoreChange={onScoreChange}
-                        onScoreCommit={onScoreCommit}
-                      />
-
-                      <CollapsibleRoundGroup
-                        title="Completed Knockout Rounds"
-                        description="Revisit playoff results without adding scroll to live scoring."
-                        rounds={endedKnockoutOnlyRounds}
-                        scoresByRound={knockoutScoresByRound}
-                        activeRound={activeKnockoutRound}
-                        endedRounds={endedKnockoutRounds}
-                        canEdit={canEdit}
-                        stage="knockout"
-                        onStartRound={onStartRound}
-                        onEndRound={onEndRound}
-                        onEditRound={onEditRound}
-                        onScoreChange={onScoreChange}
-                        onScoreCommit={onScoreCommit}
-                      />
-                    </>
-                  ) : (
-                    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                      <p className="text-sm text-gray-600">
-                        {leagueComplete
-                          ? "Not enough ranked pairs are available to seed the configured playoff bracket yet."
-                          : "The knockout bracket will appear once league play is fully ended."}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              ) : null}
+          <div className="space-y-5">
+            <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 shadow-sm">
+              <p className="text-sm font-semibold uppercase tracking-wide text-indigo-700">Current Focus</p>
+              <h3 className="mt-1 text-lg font-semibold text-gray-900">
+                {liveLeagueRounds.length > 0 || liveKnockoutRounds.length > 0
+                  ? "Live rounds stay expanded so score entry is always in reach."
+                  : nextRoundLabel
+                    ? `Start ${nextRoundLabel} when you are ready.`
+                    : "All rounds have been started."}
+              </h3>
             </div>
 
-            <aside className="space-y-5 xl:sticky xl:top-24 xl:self-start">
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Round Control</h3>
-                <p className="mt-3 text-sm text-gray-600">
-                  Keep your attention on live rounds. Everything else is collapsed until you need it.
-                </p>
-                <div className="mt-4 rounded-xl bg-gray-50 p-4">
-                  <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Next round to start</p>
-                  <p className="mt-1 text-lg font-semibold text-gray-900">{nextRoundLabel || "No rounds remaining"}</p>
+            <RoundList
+              title="Live League Rounds"
+              rounds={liveLeagueRounds}
+              scoresByRound={leagueScoresByRound}
+              activeRound={activeLeagueRound}
+              endedRounds={endedLeagueRounds}
+              canEdit={canEdit}
+              stage="league"
+              onStartRound={onStartRound}
+              onEndRound={onEndRound}
+              onEditRound={onEditRound}
+              onScoreChange={onScoreChange}
+              onScoreCommit={onScoreCommit}
+            />
+
+            <CollapsibleRoundGroup
+              title="Upcoming League Rounds"
+              description="Start these later as courts free up."
+              rounds={pendingLeagueRounds}
+              scoresByRound={leagueScoresByRound}
+              activeRound={activeLeagueRound}
+              endedRounds={endedLeagueRounds}
+              canEdit={canEdit}
+              stage="league"
+              onStartRound={onStartRound}
+              onEndRound={onEndRound}
+              onEditRound={onEditRound}
+              onScoreChange={onScoreChange}
+              onScoreCommit={onScoreCommit}
+            />
+
+            <CollapsibleRoundGroup
+              title="Completed League Rounds"
+              description="Review finished league results without crowding the live workflow."
+              rounds={endedLeagueOnlyRounds}
+              scoresByRound={leagueScoresByRound}
+              activeRound={activeLeagueRound}
+              endedRounds={endedLeagueRounds}
+              canEdit={canEdit}
+              stage="league"
+              onStartRound={onStartRound}
+              onEndRound={onEndRound}
+              onEditRound={onEditRound}
+              onScoreChange={onScoreChange}
+              onScoreCommit={onScoreCommit}
+            />
+
+            {hasBracket ? (
+              <div className="space-y-5">
+                <div className="rounded-2xl border border-slate-200 bg-slate-900 p-5 text-white shadow-sm">
+                  <p className="text-sm font-medium text-slate-200">Playoff Stage</p>
+                  <h3 className="mt-1 text-lg font-semibold">
+                    {leagueComplete
+                      ? "League table locked. Knockout rounds are ready below."
+                      : "End each league round to unlock the playoff stage."}
+                  </h3>
                 </div>
+
+                {knockoutRounds.length > 0 ? (
+                  <>
+                    <RoundList
+                      title="Live Knockout Rounds"
+                      rounds={liveKnockoutRounds}
+                      scoresByRound={knockoutScoresByRound}
+                      activeRound={activeKnockoutRound}
+                      endedRounds={endedKnockoutRounds}
+                      canEdit={canEdit}
+                      stage="knockout"
+                      onStartRound={onStartRound}
+                      onEndRound={onEndRound}
+                      onEditRound={onEditRound}
+                      onScoreChange={onScoreChange}
+                      onScoreCommit={onScoreCommit}
+                    />
+
+                    <CollapsibleRoundGroup
+                      title="Upcoming Knockout Rounds"
+                      description="Future playoff rounds stay tucked away until they matter."
+                      rounds={pendingKnockoutRounds}
+                      scoresByRound={knockoutScoresByRound}
+                      activeRound={activeKnockoutRound}
+                      endedRounds={endedKnockoutRounds}
+                      canEdit={canEdit}
+                      stage="knockout"
+                      onStartRound={onStartRound}
+                      onEndRound={onEndRound}
+                      onEditRound={onEditRound}
+                      onScoreChange={onScoreChange}
+                      onScoreCommit={onScoreCommit}
+                    />
+
+                    <CollapsibleRoundGroup
+                      title="Completed Knockout Rounds"
+                      description="Revisit playoff results without adding scroll to live scoring."
+                      rounds={endedKnockoutOnlyRounds}
+                      scoresByRound={knockoutScoresByRound}
+                      activeRound={activeKnockoutRound}
+                      endedRounds={endedKnockoutRounds}
+                      canEdit={canEdit}
+                      stage="knockout"
+                      onStartRound={onStartRound}
+                      onEndRound={onEndRound}
+                      onEditRound={onEditRound}
+                      onScoreChange={onScoreChange}
+                      onScoreCommit={onScoreCommit}
+                    />
+                  </>
+                ) : (
+                  <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                    <p className="text-sm text-gray-600">
+                      {leagueComplete
+                        ? "Not enough ranked pairs are available to seed the configured playoff bracket yet."
+                        : "The knockout bracket will appear once league play is fully ended."}
+                    </p>
+                  </div>
+                )}
               </div>
-            </aside>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -890,17 +898,6 @@ export default function ScoringPage({
 
       {activePanel === "rankings" ? (
         <div className="space-y-6">
-          <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-            <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Round Control</h3>
-            <p className="mt-3 text-sm text-gray-600">
-              Rankings only refresh when a round is ended, so the table always reflects locked results.
-            </p>
-            <div className="mt-4 rounded-xl bg-gray-50 p-4">
-              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Next round to start</p>
-              <p className="mt-1 text-lg font-semibold text-gray-900">{nextRoundLabel || "No rounds remaining"}</p>
-            </div>
-          </div>
-
           <CollapsibleSection
             title="League Pair Rankings"
             description="Based on completed league rounds only. Playoff matches do not change this table."
