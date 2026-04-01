@@ -140,7 +140,7 @@ export default function RosterTable({ data, fixedPairs }) {
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <details className="rounded-xl border border-gray-200 bg-white shadow-sm" open>
+        <details className="rounded-xl border border-gray-200 bg-white shadow-sm">
           <summary className="cursor-pointer list-none px-5 py-4">
             <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Rest Distribution</h3>
           </summary>
