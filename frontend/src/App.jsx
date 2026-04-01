@@ -5,6 +5,7 @@ import RosterTable from "./components/RosterTable";
 import DownloadCSV from "./components/DownloadCSV";
 import ScoringPage from "./components/ScoringPage";
 import {
+  batchUpdateSharedScores,
   createSharedSession,
   deleteSharedSession,
   editSharedRound,
@@ -776,7 +777,7 @@ export default function App() {
 
     return enqueueScoreMutation(async () => {
       try {
-        const updated = await updateSharedScore(sessionId, {
+        const result = await updateSharedScore(sessionId, {
           stage,
           round_index: roundIndex,
           court_index: courtIndex,
@@ -787,9 +788,7 @@ export default function App() {
           delete pendingScoreEditsRef.current[syncKey];
         }
 
-        const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
-        rememberSessionAccess(normalized.sessionId, normalized.editToken);
-        setCurrentSession(normalized);
+        setCurrentSession((current) => (current ? { ...current, version: result.version ?? current.version } : current));
         setError(null);
       } catch (e) {
         setError(e.message);
@@ -803,9 +802,32 @@ export default function App() {
       edit.stage === stage && edit.roundIndex === roundIndex
     );
 
-    for (const [, edit] of pendingEntries) {
-      await pushScoreUpdate(sessionId, stage, roundIndex, edit.courtIndex, edit.teamKey, edit.rawValue);
-    }
+    if (pendingEntries.length === 0) return;
+
+    await enqueueScoreMutation(async () => {
+      const updates = pendingEntries.map(([, edit]) => ({
+        stage,
+        round_index: roundIndex,
+        court_index: edit.courtIndex,
+        team_key: edit.teamKey,
+        value: edit.rawValue === "" ? null : Math.max(0, Number.parseInt(edit.rawValue, 10) || 0),
+      }));
+
+      const result = await batchUpdateSharedScores(sessionId, {
+        stage,
+        round_index: roundIndex,
+        updates,
+      }, currentSession?.editToken || sessionAccess[sessionId] || null);
+
+      pendingEntries.forEach(([syncKey, edit]) => {
+        if (pendingScoreEditsRef.current[syncKey]?.rawValue === edit.rawValue) {
+          delete pendingScoreEditsRef.current[syncKey];
+        }
+      });
+
+      setCurrentSession((current) => (current ? { ...current, version: result.version ?? current.version } : current));
+      setError(null);
+    });
   }
 
   function handleScoreChange(stage, roundIndex, courtIndex, teamKey, rawValue) {

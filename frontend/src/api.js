@@ -110,3 +110,13 @@ export async function updateSharedScore(sessionId, payload, editToken) {
 
   return readJson(res);
 }
+
+export async function batchUpdateSharedScores(sessionId, payload, editToken) {
+  const res = await fetch(withEditToken(`/api/sessions/${sessionId}/scores/batch`, editToken), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  return readJson(res);
+}
