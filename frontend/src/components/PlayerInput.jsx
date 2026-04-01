@@ -66,24 +66,24 @@ export default function PlayerInput({ players, setPlayers, fixedPairs, setFixedP
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <h2 className="text-lg font-semibold text-gray-800">Players</h2>
-        <span className="text-sm text-gray-500 bg-gray-100 px-2.5 py-0.5 rounded-full">
+        <span className="w-fit rounded-full bg-gray-100 px-2.5 py-0.5 text-sm text-gray-500">
           {players.length} players
         </span>
       </div>
 
-      <form onSubmit={addPlayer} className="flex gap-2 mb-4">
+      <form onSubmit={addPlayer} className="mb-4 flex flex-col gap-2 sm:flex-row">
         <input
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="Add player name..."
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          className="flex-1 rounded-lg border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
         <button
           type="submit"
-          className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
         >
           Add
         </button>
@@ -104,11 +104,11 @@ export default function PlayerInput({ players, setPlayers, fixedPairs, setFixedP
           return (
             <div
               key={p}
-              className={`flex items-center justify-between px-3 py-2 rounded-lg border text-sm transition-colors cursor-pointer
+              className={`flex flex-col gap-2 rounded-lg border px-3 py-3 text-sm transition-colors cursor-pointer sm:flex-row sm:items-center sm:justify-between
                 ${isFirstSelected ? "bg-indigo-100 border-indigo-400 ring-2 ring-indigo-300" : colorClass || "border-gray-200 hover:bg-gray-50"}`}
               onClick={() => togglePairMode(p)}
             >
-              <div className="flex items-center gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <span className="font-medium text-gray-800">{p}</span>
                 {partner && (
                   <span className="text-xs text-gray-500 bg-white/70 px-1.5 py-0.5 rounded">
@@ -121,7 +121,7 @@ export default function PlayerInput({ players, setPlayers, fixedPairs, setFixedP
                   e.stopPropagation();
                   removePlayer(p);
                 }}
-                className="text-gray-400 hover:text-red-500 transition-colors p-0.5"
+                className="self-end p-1 text-gray-400 transition-colors hover:text-red-500 sm:self-auto"
                 title="Remove player"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -140,9 +140,9 @@ export default function PlayerInput({ players, setPlayers, fixedPairs, setFixedP
             {fixedPairs.map(([a, b], i) => (
               <span
                 key={`${a}-${b}`}
-                className={`inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full border ${pairColors[i % pairColors.length]}`}
+                className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${pairColors[i % pairColors.length]}`}
               >
-                {a} & {b}
+                <span className="truncate">{a} & {b}</span>
                 <button
                   onClick={() => setFixedPairs(fixedPairs.filter((_, j) => j !== i))}
                   className="hover:text-red-600 ml-0.5"
