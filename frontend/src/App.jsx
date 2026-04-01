@@ -369,6 +369,58 @@ function PlannerStepCard({ step, title, description, tone = "default", children 
   );
 }
 
+function PlannerModeCard({ title, description, active, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`rounded-2xl border p-5 text-left shadow-sm transition-colors ${
+        active
+          ? "border-indigo-200 bg-indigo-50"
+          : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+      }`}
+    >
+      <p className="text-lg font-semibold text-gray-900">{title}</p>
+      <p className="mt-2 text-sm text-gray-600">{description}</p>
+    </button>
+  );
+}
+
+function PlannerStepper({ currentStep }) {
+  const steps = [
+    { id: 1, label: "Players & Pairs" },
+    { id: 2, label: "Settings" },
+    { id: 3, label: "Review & Start" },
+  ];
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-3">
+      {steps.map((step) => {
+        const isActive = currentStep === step.id;
+        const isComplete = currentStep > step.id;
+
+        return (
+          <div
+            key={step.id}
+            className={`rounded-xl border px-4 py-3 ${
+              isActive
+                ? "border-indigo-200 bg-indigo-50"
+                : isComplete
+                  ? "border-emerald-200 bg-emerald-50"
+                  : "border-white/15 bg-white/10"
+            }`}
+          >
+            <p className={`text-xs font-semibold uppercase tracking-wide ${isActive || isComplete ? "text-gray-500" : "text-indigo-100"}`}>
+              Step {step.id}
+            </p>
+            <p className={`mt-1 text-sm font-semibold ${isActive || isComplete ? "text-gray-900" : "text-white"}`}>{step.label}</p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function App() {
   const plannerState = readStorage(PLANNER_STORAGE_KEY, null);
   const savedSession = readStorage(SESSION_STORAGE_KEY, null);
@@ -384,6 +436,8 @@ export default function App() {
   const [error, setError] = useState(null);
   const [currentSession, setCurrentSession] = useState(normalizeSession(savedSession));
   const [view, setView] = useState(initialView);
+  const [plannerMode, setPlannerMode] = useState("generate");
+  const [plannerStep, setPlannerStep] = useState(1);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionAccess, setSessionAccess] = useState(savedSessionAccess);
   const [sessions, setSessions] = useState([]);
@@ -444,7 +498,6 @@ export default function App() {
         const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
         rememberSessionAccess(normalized.sessionId, normalized.editToken);
         setCurrentSession(normalized);
-        setRoster(normalized.roster);
         setView("scoring");
         setError(null);
       })
@@ -466,7 +519,6 @@ export default function App() {
         if (latest.version !== currentSession.version) {
           rememberSessionAccess(latest.sessionId, latest.editToken);
           setCurrentSession(latest);
-          setRoster(latest.roster);
         }
       } catch {
         // Keep current local state if polling fails; next successful poll will resync.
@@ -501,6 +553,7 @@ export default function App() {
     try {
       const result = await generateRoster(getLeagueRequestPayload(players, fixedPairs, config));
       setRoster(result);
+      setPlannerStep(3);
       setView("planner");
     } catch (e) {
       setError(e.message);
@@ -551,6 +604,9 @@ export default function App() {
       const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
+      setRoster(null);
+      setPlannerMode("generate");
+      setPlannerStep(1);
       setSessionIdInUrl(normalized.sessionId, normalized.editToken);
       setView("scoring");
       await loadSessions();
@@ -572,7 +628,6 @@ export default function App() {
       );
       rememberSessionAccess(latest.sessionId, latest.editToken);
       setCurrentSession(latest);
-      setRoster(latest.roster);
       setSessionIdInUrl(latest.sessionId, latest.editToken);
       setView("scoring");
       await loadSessions();
@@ -584,7 +639,17 @@ export default function App() {
   }
 
   function handleBackToPlanner() {
+    setPlannerMode("generate");
+    setPlannerStep(roster ? 3 : 1);
     setView("planner");
+  }
+
+  function showGenerateMode() {
+    setPlannerMode("generate");
+  }
+
+  function showSessionsMode() {
+    setPlannerMode("sessions");
   }
 
   async function handleCopyShareLink(sessionId, mode = "view") {
@@ -787,7 +852,8 @@ export default function App() {
     scheduleScoreSync(currentSession.sessionId, stage, roundIndex, courtIndex, teamKey, rawValue, true);
   }
 
-  const downloadData = view === "planner" ? roster : null;
+  const canContinueFromPlayers = players.length >= 4;
+  const canContinueFromSettings = config.num_courts >= 1;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -795,24 +861,6 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-bold text-gray-900">Badminton</h1>
-          </div>
-          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-            {downloadData ? <DownloadCSV data={downloadData} /> : null}
-            {view === "planner" ? (
-              <button
-                onClick={handleGenerate}
-                disabled={loading || players.length < 4}
-                className="w-full sm:w-auto px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-lg hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2"
-              >
-                {loading && (
-                  <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                )}
-                {loading ? loadingText() : roster ? "Regenerate Roster" : "Generate Roster"}
-              </button>
-            ) : null}
           </div>
         </div>
       </header>
@@ -833,152 +881,210 @@ export default function App() {
         {view === "planner" ? (
           <div className="space-y-8">
             <section className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-600 via-indigo-500 to-sky-500 p-5 text-white shadow-sm sm:p-6">
-              <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+              <div className="flex flex-col gap-5">
                 <div>
-                  <p className="text-sm font-medium text-indigo-100">Create New Session</p>
-                  <h2 className="mt-1 text-2xl font-bold">Build the next badminton draw in a clear step-by-step flow</h2>
+                  <p className="text-sm font-medium text-indigo-100">Planner</p>
+                  <h2 className="mt-1 text-2xl font-bold">Choose what you want to do next</h2>
                   <p className="mt-2 max-w-3xl text-sm text-indigo-50">
-                    Set players and format first, generate the roster when it looks right, then lock it into a shared scoring session.
+                    Create a new roster in steps, or jump straight into an existing session.
                   </p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-100">Step 1</p>
-                    <p className="mt-1 text-sm font-semibold text-white">Players & Format</p>
-                  </div>
-                  <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-100">Step 2</p>
-                    <p className="mt-1 text-sm font-semibold text-white">Generate & Review</p>
-                  </div>
-                  <div className="rounded-xl border border-white/15 bg-white/10 px-4 py-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-100">Step 3</p>
-                    <p className="mt-1 text-sm font-semibold text-white">Start Session</p>
-                  </div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <PlannerModeCard
+                    title="Generate Roster"
+                    description="Add players, configure settings, review the roster, and start a session."
+                    active={plannerMode === "generate"}
+                    onClick={showGenerateMode}
+                  />
+                  <PlannerModeCard
+                    title="Existing Sessions"
+                    description="Open, share, or remove saved sessions."
+                    active={plannerMode === "sessions"}
+                    onClick={showSessionsMode}
+                  />
                 </div>
               </div>
             </section>
 
-            <section className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(320px,1fr)_minmax(0,1.55fr)]">
-              <div className="space-y-6 xl:sticky xl:top-24 xl:self-start">
-                <PlannerStepCard
-                  step="Step 1"
-                  title="Players and format"
-                  description="Add players, choose the format, and adjust the settings."
-                >
-                  <div className="space-y-6">
-                    <PlayerInput
-                      players={players}
-                      setPlayers={setPlayers}
-                      fixedPairs={fixedPairs}
-                      setFixedPairs={setFixedPairs}
-                    />
-                    <ConfigPanel
-                      config={config}
-                      setConfig={setConfig}
-                      players={players}
-                      fixedPairs={fixedPairs}
-                    />
-                  </div>
-                </PlannerStepCard>
-              </div>
+            {plannerMode === "generate" ? (
+              <div className="space-y-6">
+                <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                  <PlannerStepper currentStep={plannerStep} />
+                </section>
 
-              <div>
-                {loading ? (
-                  <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-12 text-center">
-                    <svg className="w-12 h-12 mx-auto mb-4 text-indigo-500 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    <p className="text-gray-700 font-medium">{loadingText()}</p>
-                    {elapsed >= 5 && (
-                      <p className="text-gray-400 text-sm mt-2">
-                        First request may take up to 30s while the server wakes up
-                      </p>
-                    )}
-                  </div>
-                ) : roster ? (
-                  <div className="space-y-4">
-                    <PlannerStepCard
-                      step="Step 2"
-                      title="Review the generated roster"
-                      description="Check the rounds and courts, then start the session when ready."
-                      tone="slate"
-                    >
-                      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                        <div>
-                          <p className="text-sm text-slate-300">
-                            Review the schedule below before locking the roster.
-                          </p>
-                        </div>
+                {plannerStep === 1 ? (
+                  <PlannerStepCard
+                    step="Step 1"
+                    title="Players and pairs"
+                    description="Add players and create any fixed pairs before moving on."
+                  >
+                    <div className="space-y-6">
+                      <PlayerInput
+                        players={players}
+                        setPlayers={setPlayers}
+                        fixedPairs={fixedPairs}
+                        setFixedPairs={setFixedPairs}
+                      />
+                      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
                         <button
-                          onClick={handleLockRoster}
-                          disabled={sessionLoading}
-                          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:opacity-60"
+                          type="button"
+                          onClick={() => setPlannerMode("sessions")}
+                          className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
                         >
-                          {sessionLoading ? "Creating Session..." : "Step 3: Lock Roster and Start Session"}
+                          View Existing Sessions
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPlannerStep(2)}
+                          disabled={!canContinueFromPlayers}
+                          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                        >
+                          Next: Settings
                         </button>
                       </div>
-                    </PlannerStepCard>
-                    <RosterTable data={roster} fixedPairs={fixedPairs} />
-                  </div>
-                ) : (
+                    </div>
+                  </PlannerStepCard>
+                ) : null}
+
+                {plannerStep === 2 ? (
                   <PlannerStepCard
                     step="Step 2"
-                    title="Generate and review"
-                    description="Generate a roster to preview the rounds and courts here."
+                    title="Settings"
+                    description="Choose the format and scheduling settings for this roster."
                   >
-                    <div className="text-gray-300 mb-4">
-                      <svg className="w-16 h-16 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                      </svg>
+                    <div className="space-y-6">
+                      <ConfigPanel
+                        config={config}
+                        setConfig={setConfig}
+                        players={players}
+                        fixedPairs={fixedPairs}
+                      />
+                      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
+                        <button
+                          type="button"
+                          onClick={() => setPlannerStep(1)}
+                          className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                        >
+                          Back
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setPlannerStep(3)}
+                          disabled={!canContinueFromSettings}
+                          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                        >
+                          Next: Review
+                        </button>
+                      </div>
                     </div>
-                    <p className="mt-2 text-gray-700 font-medium">Generate a roster to review it here</p>
-                    <p className="text-gray-400 text-sm mt-1">Your generated rounds will appear here.</p>
                   </PlannerStepCard>
-                )}
-              </div>
-            </section>
+                ) : null}
 
-            <details className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm" open={sessions.length > 0}>
-              <summary className="flex cursor-pointer list-none flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Existing Sessions</p>
-                  <h2 className="mt-1 text-lg font-semibold text-gray-900">Resume, share, or clean up saved sessions</h2>
-                  <p className="mt-2 text-sm text-gray-600">Open an existing session or remove one you no longer need.</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    loadSessions();
-                  }}
-                  disabled={sessionsLoading}
-                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
-                >
-                  {sessionsLoading ? "Refreshing..." : "Refresh Sessions"}
-                </button>
-              </summary>
-              <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
-                {sessions.length > 0 ? (
-                  sessions.map((session) => (
-                    <SessionCard
-                      key={session.sessionId}
-                      session={session}
-                      isCurrent={session.sessionId === currentSession?.sessionId}
-                      canScore={Boolean(sessionAccess[session.sessionId])}
-                      feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback : null}
-                      onOpen={openSession}
-                      onCopy={handleCopyShareLink}
-                      onDelete={handleDeleteSession}
-                    />
-                  ))
-                ) : (
-                  <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
-                    No shared sessions yet. Generate and lock a roster to create your first one.
+                {plannerStep === 3 ? (
+                  <div className="space-y-4">
+                    <PlannerStepCard
+                      step="Step 3"
+                      title="Review and start"
+                      description="Generate the roster, review the rounds, then start the session."
+                      tone={roster ? "slate" : "default"}
+                    >
+                      {loading ? (
+                        <div className="py-8 text-center">
+                          <svg className="mx-auto mb-4 h-12 w-12 animate-spin text-indigo-500" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                          </svg>
+                          <p className={`${roster ? "text-slate-200" : "text-gray-700"} font-medium`}>{loadingText()}</p>
+                          {elapsed >= 5 ? (
+                            <p className={`mt-2 text-sm ${roster ? "text-slate-400" : "text-gray-400"}`}>
+                              First request may take up to 30s while the server wakes up
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          <p className={`text-sm ${roster ? "text-slate-300" : "text-gray-600"}`}>
+                            {roster ? "The latest generated roster is ready to review below." : "Generate a roster to preview the rounds and courts here."}
+                          </p>
+                          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                            <button
+                              type="button"
+                              onClick={handleGenerate}
+                              disabled={loading || players.length < 4}
+                              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                            >
+                              {roster ? "Regenerate Roster" : "Generate Roster"}
+                            </button>
+                            {roster ? <DownloadCSV data={roster} /> : null}
+                            <button
+                              type="button"
+                              onClick={handleLockRoster}
+                              disabled={!roster || sessionLoading}
+                              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                            >
+                              {sessionLoading ? "Creating Session..." : "Start Session"}
+                            </button>
+                          </div>
+                          <div className="flex">
+                            <button
+                              type="button"
+                              onClick={() => setPlannerStep(2)}
+                              className={`inline-flex min-h-11 items-center justify-center rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                                roster
+                                  ? "border-slate-500/40 bg-transparent text-white hover:bg-white/10"
+                                  : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                              }`}
+                            >
+                              Back
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </PlannerStepCard>
+
+                    {roster ? <RosterTable data={roster} fixedPairs={fixedPairs} /> : null}
                   </div>
-                )}
+                ) : null}
               </div>
-            </details>
+            ) : (
+              <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Existing Sessions</p>
+                    <h2 className="mt-1 text-lg font-semibold text-gray-900">Resume, share, or clean up saved sessions</h2>
+                    <p className="mt-2 text-sm text-gray-600">Open an existing session or remove one you no longer need.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={loadSessions}
+                    disabled={sessionsLoading}
+                    className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+                  >
+                    {sessionsLoading ? "Refreshing..." : "Refresh Sessions"}
+                  </button>
+                </div>
+                <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
+                  {sessions.length > 0 ? (
+                    sessions.map((session) => (
+                      <SessionCard
+                        key={session.sessionId}
+                        session={session}
+                        isCurrent={session.sessionId === currentSession?.sessionId}
+                        canScore={Boolean(sessionAccess[session.sessionId])}
+                        feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback : null}
+                        onOpen={openSession}
+                        onCopy={handleCopyShareLink}
+                        onDelete={handleDeleteSession}
+                      />
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
+                      No shared sessions yet. Generate and lock a roster to create your first one.
+                    </div>
+                  )}
+                </div>
+              </section>
+            )}
           </div>
         ) : currentSession ? (
           <ScoringPage
