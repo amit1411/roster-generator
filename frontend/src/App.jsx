@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import PlayerInput from "./components/PlayerInput";
 import ConfigPanel from "./components/ConfigPanel";
 import RosterTable from "./components/RosterTable";
+import DownloadCSV from "./components/DownloadCSV";
 import ScoringPage from "./components/ScoringPage";
 import {
   createSharedSession,
@@ -763,6 +764,8 @@ export default function App() {
     scheduleScoreSync(currentSession.sessionId, stage, roundIndex, courtIndex, teamKey, rawValue, true);
   }
 
+  const downloadData = view === "planner" ? roster : null;
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
@@ -771,6 +774,7 @@ export default function App() {
             <h1 className="text-xl font-bold text-gray-900">Badminton</h1>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            {downloadData ? <DownloadCSV data={downloadData} /> : null}
             {view === "planner" ? (
               <button
                 onClick={handleGenerate}
