@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import PlayerInput from "./components/PlayerInput";
 import ConfigPanel from "./components/ConfigPanel";
 import RosterTable from "./components/RosterTable";
@@ -9,9 +9,13 @@ import {
   deleteSharedSession,
   editSharedRound,
   endSharedRound,
+  fetchCurrentUser,
   fetchSharedSession,
   generateRoster,
+  login,
+  loginWithGoogle,
   listSharedSessions,
+  register,
   startSharedRound,
   updateSharedScore,
 } from "./api";
@@ -38,6 +42,7 @@ const PLANNER_STORAGE_KEY = "badminton-roster:planner";
 const SESSION_STORAGE_KEY = "badminton-roster:session";
 const SESSION_ACCESS_STORAGE_KEY = "badminton-roster:session-access";
 const VIEW_STORAGE_KEY = "badminton-roster:view";
+const AUTH_STORAGE_KEY = "badminton-roster:auth";
 const SESSION_POLL_INTERVAL_MS = 5000;
 const SCORE_SYNC_DELAY_MS = 450;
 
@@ -166,6 +171,7 @@ function normalizeSessionSummary(session) {
     endedRounds: session.endedRounds ?? session.ended_rounds ?? 0,
     totalRounds: session.totalRounds ?? session.total_rounds ?? 0,
     liveRounds: session.liveRounds ?? session.live_rounds ?? 0,
+    canManage: session.canManage ?? session.can_manage ?? false,
   };
 }
 
@@ -276,7 +282,7 @@ function mergePendingScoreEdits(session, pendingEdits) {
   return nextSession;
 }
 
-function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, onDelete }) {
+function SessionCard({ session, isCurrent, feedback, canCopyScorer, onOpen, onCopy, onDelete }) {
   const statusTone =
     session.status === "completed"
       ? "bg-emerald-100 text-emerald-700"
@@ -304,7 +310,7 @@ function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, o
             {session.endedRounds} / {session.totalRounds || "?"} rounds ended
           </p>
           <p className="mt-1 text-xs font-medium text-gray-500">
-            {canScore ? "Scorer access available on this device" : "View-only link available"}
+            {session.canManage ? "You own this session" : canCopyScorer ? "Scorer access available on this device" : "View-only link available"}
           </p>
           <p className="mt-1 text-xs text-gray-400">Updated {formatSessionTime(session.updatedAt)}</p>
         </div>
@@ -314,7 +320,7 @@ function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, o
             onClick={() => onOpen(session.sessionId)}
             className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700"
           >
-            {canScore ? "Open Scorer View" : "Open View Link"}
+            {session.canManage || canCopyScorer ? "Open Scorer View" : "Open View Link"}
           </button>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <button
@@ -325,7 +331,7 @@ function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, o
             </button>
             <button
               onClick={() => onCopy(session.sessionId, "scorer")}
-              disabled={!canScore}
+              disabled={!canCopyScorer}
               className="inline-flex min-h-11 items-center justify-center rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-700 transition-colors hover:bg-indigo-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
             >
               {feedback?.mode === "scorer" ? feedback.text : "Copy Scorer"}
@@ -334,7 +340,7 @@ function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, o
           <div className="grid grid-cols-1 gap-2">
             <button
               onClick={() => onDelete(session.sessionId)}
-              disabled={!canScore}
+              disabled={!session.canManage}
               className="inline-flex min-h-11 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
             >
               Delete
@@ -421,10 +427,135 @@ function PlannerStepper({ currentStep }) {
   );
 }
 
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
+
+function AuthCard({ mode, setMode, form, setForm, loading, error, onSubmit, googleEnabled, onGoogleCredential }) {
+  const googleButtonRef = useRef(null);
+  const googleInitializedRef = useRef(false);
+
+  useEffect(() => {
+    if (!googleEnabled || !googleButtonRef.current || !window.google?.accounts?.id) return;
+
+    googleButtonRef.current.innerHTML = "";
+    if (!googleInitializedRef.current) {
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: (response) => {
+          if (response?.credential) {
+            onGoogleCredential(response.credential);
+          }
+        },
+      });
+      googleInitializedRef.current = true;
+    }
+    window.google.accounts.id.renderButton(googleButtonRef.current, {
+      theme: "outline",
+      size: "large",
+      width: 320,
+      text: "continue_with",
+      shape: "pill",
+    });
+  }, [googleEnabled, onGoogleCredential]);
+
+  return (
+    <section className="rounded-2xl border border-gray-200 bg-white p-5 text-gray-900 shadow-sm">
+      <div className="mb-4">
+        <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Account</p>
+        <h3 className="mt-1 text-lg font-semibold text-gray-900">
+          {mode === "login" ? "Sign in to manage sessions" : "Create your account"}
+        </h3>
+        <p className="mt-2 text-sm text-gray-600">
+          Public view-only links still work without login. Creating and managing sessions requires an account.
+        </p>
+      </div>
+
+      <div className="mb-4 grid grid-cols-2 gap-2 rounded-xl bg-gray-100 p-1">
+        {[
+          { id: "login", label: "Sign In" },
+          { id: "register", label: "Create Account" },
+        ].map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => setMode(option.id)}
+            className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+              mode === option.id ? "bg-white text-gray-900 shadow-sm" : "text-gray-600 hover:bg-gray-50"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+
+      <form onSubmit={onSubmit} className="space-y-4">
+        {mode === "register" ? (
+          <div>
+            <label htmlFor="auth-name" className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Name</label>
+            <input
+              id="auth-name"
+              type="text"
+              value={form.name}
+              onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))}
+              className="w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-sm text-gray-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="Your name"
+            />
+          </div>
+        ) : null}
+        <div>
+          <label htmlFor="auth-email" className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Email</label>
+          <input
+            id="auth-email"
+            type="email"
+            value={form.email}
+            onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-sm text-gray-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="name@example.com"
+          />
+        </div>
+        <div>
+          <label htmlFor="auth-password" className="mb-1 block text-xs font-medium uppercase tracking-wide text-gray-500">Password</label>
+          <input
+            id="auth-password"
+            type="password"
+            value={form.password}
+            onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-sm text-gray-900 focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="At least 8 characters"
+          />
+        </div>
+
+        {error ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            {error}
+          </div>
+        ) : null}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+        >
+          {loading ? "Please wait..." : mode === "login" ? "Sign In" : "Create Account"}
+        </button>
+      </form>
+
+      {googleEnabled ? (
+        <div className="mt-4 border-t border-gray-100 pt-4">
+          <p className="mb-3 text-center text-xs font-medium uppercase tracking-wide text-gray-400">or continue with</p>
+          <div className="flex justify-center">
+            <div ref={googleButtonRef} className="min-h-11" />
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export default function App() {
   const plannerState = readStorage(PLANNER_STORAGE_KEY, null);
   const savedSession = readStorage(SESSION_STORAGE_KEY, null);
   const savedSessionAccess = readStorage(SESSION_ACCESS_STORAGE_KEY, {});
+  const savedAuth = readStorage(AUTH_STORAGE_KEY, null);
   const initialView = readStorage(VIEW_STORAGE_KEY, "planner");
 
   const [players, setPlayers] = useState(plannerState?.players || DEFAULT_PLAYERS);
@@ -439,6 +570,12 @@ export default function App() {
   const [view, setView] = useState(initialView);
   const [plannerMode, setPlannerMode] = useState("generate");
   const [plannerStep, setPlannerStep] = useState(1);
+  const [authToken, setAuthToken] = useState(savedAuth?.token || null);
+  const [authUser, setAuthUser] = useState(savedAuth?.user || null);
+  const [authMode, setAuthMode] = useState("login");
+  const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState(null);
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionAccess, setSessionAccess] = useState(savedSessionAccess);
   const [sessions, setSessions] = useState([]);
@@ -477,71 +614,16 @@ export default function App() {
   }, [sessionAccess]);
 
   useEffect(() => {
+    if (authToken && authUser) {
+      writeStorage(AUTH_STORAGE_KEY, { token: authToken, user: authUser });
+    } else if (typeof window !== "undefined") {
+      window.localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+  }, [authToken, authUser]);
+
+  useEffect(() => {
     writeStorage(VIEW_STORAGE_KEY, view);
   }, [view]);
-
-  useEffect(() => {
-    loadSessions();
-  }, []);
-
-  useEffect(() => {
-    if (view === "planner") {
-      loadSessions();
-    }
-  }, [view]);
-
-  useEffect(() => {
-    const urlSession = getSessionContextFromUrl();
-    if (!urlSession?.sessionId) return;
-
-    setSessionLoading(true);
-    fetchSharedSession(urlSession.sessionId, urlSession.editToken)
-      .then((session) => {
-        const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
-        rememberSessionAccess(normalized.sessionId, normalized.editToken);
-        setCurrentSession(normalized);
-        setView("scoring");
-        setError(null);
-      })
-      .catch((err) => {
-        setError(err.message);
-      })
-      .finally(() => setSessionLoading(false));
-  }, []);
-
-  useEffect(() => {
-    if (!currentSession?.sessionId) return;
-
-    const intervalId = window.setInterval(async () => {
-      try {
-        const latest = mergePendingScoreEdits(
-          normalizeSession(await fetchSharedSession(currentSession.sessionId, currentSession.editToken)),
-          pendingScoreEditsRef.current
-        );
-        if (latest.version !== currentSession.version) {
-          rememberSessionAccess(latest.sessionId, latest.editToken);
-          setCurrentSession(latest);
-        }
-      } catch {
-        // Keep current local state if polling fails; next successful poll will resync.
-      }
-    }, SESSION_POLL_INTERVAL_MS);
-
-    return () => window.clearInterval(intervalId);
-  }, [currentSession?.editToken, currentSession?.sessionId, currentSession?.version]);
-
-  useEffect(() => {
-    if (view === "scoring" && !currentSession && !sessionLoading) {
-      setView("planner");
-    }
-  }, [view, currentSession, sessionLoading]);
-
-  useEffect(() => {
-    const pendingTimeouts = scoreSyncTimeoutsRef.current;
-    return () => {
-      Object.values(pendingTimeouts).forEach((timeoutId) => window.clearTimeout(timeoutId));
-    };
-  }, []);
 
   function enqueueScoreMutation(task) {
     const nextOperation = scoreMutationQueueRef.current.then(task, task);
@@ -580,17 +662,21 @@ export default function App() {
     setSessionAccess((current) => ({ ...current, [sessionId]: editToken }));
   }
 
-  async function loadSessions() {
+  const loadSessions = useCallback(async () => {
     setSessionsLoading(true);
     try {
-      const list = await listSharedSessions();
+      if (!authToken) {
+        setSessions([]);
+        return;
+      }
+      const list = await listSharedSessions(authToken);
       setSessions(list.map(normalizeSessionSummary).filter(Boolean));
     } catch (e) {
       setError((currentError) => currentError || e.message);
     } finally {
       setSessionsLoading(false);
     }
-  }
+  }, [authToken]);
 
   async function handleLockRoster() {
     if (!roster) return;
@@ -606,7 +692,7 @@ export default function App() {
           league_meetings: config.league_meetings,
           knockout_qualifiers: config.knockout_qualifiers,
         },
-      });
+      }, authToken);
       const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
@@ -629,7 +715,7 @@ export default function App() {
     try {
       const editToken = sessionAccess[sessionId] || null;
       const latest = mergePendingScoreEdits(
-        normalizeSession(await fetchSharedSession(sessionId, editToken)),
+        normalizeSession(await fetchSharedSession(sessionId, editToken, authToken)),
         pendingScoreEditsRef.current
       );
       rememberSessionAccess(latest.sessionId, latest.editToken);
@@ -660,11 +746,85 @@ export default function App() {
     setPlannerMode("sessions");
   }
 
+  async function handleAuthSubmit(event) {
+    event.preventDefault();
+    setAuthLoading(true);
+    setAuthError(null);
+
+    try {
+      const response =
+        authMode === "login"
+          ? await login({ email: authForm.email, password: authForm.password })
+          : await register({ name: authForm.name, email: authForm.email, password: authForm.password });
+
+      setAuthToken(response.token);
+      setAuthUser(response.user);
+      setAuthForm({ name: "", email: "", password: "" });
+      setCurrentSession(null);
+      setSessionIdInUrl(null);
+      setPlannerMode("generate");
+      setPlannerStep(roster ? 3 : 1);
+      setView("planner");
+      await loadSessions();
+    } catch (e) {
+      setAuthError(e.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  async function handleGoogleSignIn(credential) {
+    setAuthLoading(true);
+    setAuthError(null);
+
+    try {
+      const response = await loginWithGoogle(credential);
+      setAuthToken(response.token);
+      setAuthUser(response.user);
+      setAuthForm({ name: "", email: "", password: "" });
+      setCurrentSession(null);
+      setSessionIdInUrl(null);
+      setPlannerMode("generate");
+      setPlannerStep(roster ? 3 : 1);
+      setView("planner");
+      await loadSessions();
+    } catch (e) {
+      setAuthError(e.message);
+    } finally {
+      setAuthLoading(false);
+    }
+  }
+
+  function handleSignOut() {
+    setAuthToken(null);
+    setAuthUser(null);
+    setAuthError(null);
+    setSessions([]);
+    setCurrentSession(null);
+    setSessionIdInUrl(null);
+    setPlannerMode("generate");
+    setPlannerStep(roster ? 3 : 1);
+    setView("planner");
+  }
+
+  function redirectToAuth(mode = "login") {
+    setAuthMode(mode);
+    setPlannerMode("sessions");
+    setView("planner");
+  }
+
   async function handleCopyShareLink(sessionId, mode = "view") {
     if (!sessionId) return;
 
-    const shareUrl = buildShareUrl(sessionId, mode === "scorer" ? sessionAccess[sessionId] || null : null);
     try {
+      let scorerToken = sessionAccess[sessionId] || null;
+      if (mode === "scorer" && !scorerToken && authToken) {
+        const latest = normalizeSession(await fetchSharedSession(sessionId, null, authToken));
+        rememberSessionAccess(latest.sessionId, latest.editToken);
+        scorerToken = latest.editToken;
+      }
+
+      const shareUrl = buildShareUrl(sessionId, mode === "scorer" ? scorerToken : null);
       await navigator.clipboard.writeText(shareUrl);
       setShareFeedback({ sessionId, mode, text: "Copied" });
       window.setTimeout(() => setShareFeedback({ sessionId: null, text: "" }), 2000);
@@ -685,7 +845,7 @@ export default function App() {
     setSessionLoading(true);
     setError(null);
     try {
-      await deleteSharedSession(sessionId, sessionAccess[sessionId] || null);
+      await deleteSharedSession(sessionId, sessionAccess[sessionId] || null, authToken);
       setSessions((current) => current.filter((session) => session.sessionId !== sessionId));
       setSessionAccess((current) => {
         const next = { ...current };
@@ -711,7 +871,7 @@ export default function App() {
       const updated = await startSharedRound(currentSession.sessionId, {
         stage,
         round_index: roundIndex,
-      }, currentSession.editToken);
+      }, currentSession.editToken, authToken);
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
@@ -729,7 +889,7 @@ export default function App() {
       const updated = await endSharedRound(currentSession.sessionId, {
         stage,
         round_index: roundIndex,
-      }, currentSession.editToken);
+      }, currentSession.editToken, authToken);
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
@@ -747,7 +907,7 @@ export default function App() {
       const updated = await editSharedRound(currentSession.sessionId, {
         stage,
         round_index: roundIndex,
-      }, currentSession.editToken);
+      }, currentSession.editToken, authToken);
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
@@ -786,7 +946,7 @@ export default function App() {
           court_index: courtIndex,
           team_key: teamKey,
           value: rawValue === "" ? null : Math.max(0, Number.parseInt(rawValue, 10) || 0),
-        }, currentSession?.editToken || sessionAccess[sessionId] || null);
+        }, currentSession?.editToken || sessionAccess[sessionId] || null, authToken);
         if (pendingScoreEditsRef.current[syncKey]?.rawValue === rawValue) {
           delete pendingScoreEditsRef.current[syncKey];
         }
@@ -863,12 +1023,113 @@ export default function App() {
   const canContinueFromPlayers = players.length >= 4;
   const canContinueFromSettings = config.num_courts >= 1;
 
+  useEffect(() => {
+    loadSessions();
+  }, [loadSessions]);
+
+  useEffect(() => {
+    if (view === "planner") {
+      loadSessions();
+    }
+  }, [loadSessions, view]);
+
+  useEffect(() => {
+    if (!authToken || authUser) return;
+
+    fetchCurrentUser(authToken)
+      .then((user) => {
+        setAuthUser(user);
+        setAuthError(null);
+      })
+      .catch(() => {
+        setAuthToken(null);
+        setAuthUser(null);
+      });
+  }, [authToken, authUser]);
+
+  useEffect(() => {
+    const urlSession = getSessionContextFromUrl();
+    if (!urlSession?.sessionId) return;
+
+    setSessionLoading(true);
+    fetchSharedSession(urlSession.sessionId, urlSession.editToken, authToken)
+      .then((session) => {
+        const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
+        rememberSessionAccess(normalized.sessionId, normalized.editToken);
+        setCurrentSession(normalized);
+        setView("scoring");
+        setError(null);
+      })
+      .catch((err) => {
+        setError(err.message);
+      })
+      .finally(() => setSessionLoading(false));
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!currentSession?.sessionId) return;
+
+    const intervalId = window.setInterval(async () => {
+      try {
+        const latest = mergePendingScoreEdits(
+          normalizeSession(await fetchSharedSession(currentSession.sessionId, currentSession.editToken, authToken)),
+          pendingScoreEditsRef.current
+        );
+        if (latest.version !== currentSession.version) {
+          rememberSessionAccess(latest.sessionId, latest.editToken);
+          setCurrentSession(latest);
+        }
+      } catch {
+        // Keep current local state if polling fails; next successful poll will resync.
+      }
+    }, SESSION_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [authToken, currentSession?.editToken, currentSession?.sessionId, currentSession?.version]);
+
+  useEffect(() => {
+    if (view === "scoring" && !currentSession && !sessionLoading) {
+      setView("planner");
+    }
+  }, [view, currentSession, sessionLoading]);
+
+  useEffect(() => {
+    const pendingTimeouts = scoreSyncTimeoutsRef.current;
+    return () => {
+      Object.values(pendingTimeouts).forEach((timeoutId) => window.clearTimeout(timeoutId));
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-bold text-gray-900">Badminton</h1>
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            {authUser ? (
+              <>
+                <div className="rounded-full bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700">
+                  {authUser.name}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSignOut}
+                  className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                >
+                  Sign Out
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => redirectToAuth("login")}
+                className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+              >
+                Sign In
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -1032,14 +1293,24 @@ export default function App() {
                               {roster ? "Regenerate Roster" : "Generate Roster"}
                             </button>
                             {roster ? <DownloadCSV data={roster} /> : null}
-                            <button
-                              type="button"
-                              onClick={handleLockRoster}
-                              disabled={!roster || sessionLoading}
-                              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
-                            >
-                              {sessionLoading ? "Creating Session..." : "Start Session"}
-                            </button>
+                            {authUser ? (
+                              <button
+                                type="button"
+                                onClick={handleLockRoster}
+                                disabled={!roster || sessionLoading}
+                                className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                              >
+                                {sessionLoading ? "Creating Session..." : "Start Session"}
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => redirectToAuth("login")}
+                                className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100"
+                              >
+                                Sign In to Start Session
+                              </button>
+                            )}
                           </div>
                           <div className="flex">
                             <button
@@ -1062,6 +1333,18 @@ export default function App() {
                   </div>
                 ) : null}
               </div>
+            ) : !authUser ? (
+              <AuthCard
+                mode={authMode}
+                setMode={setAuthMode}
+                form={authForm}
+                setForm={setAuthForm}
+                loading={authLoading}
+                error={authError}
+                onSubmit={handleAuthSubmit}
+                googleEnabled={Boolean(GOOGLE_CLIENT_ID)}
+                onGoogleCredential={handleGoogleSignIn}
+              />
             ) : (
               <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -1086,7 +1369,7 @@ export default function App() {
                         key={session.sessionId}
                         session={session}
                         isCurrent={session.sessionId === currentSession?.sessionId}
-                        canScore={Boolean(sessionAccess[session.sessionId])}
+                        canCopyScorer={Boolean(sessionAccess[session.sessionId])}
                         feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback : null}
                         onOpen={openSession}
                         onCopy={handleCopyShareLink}

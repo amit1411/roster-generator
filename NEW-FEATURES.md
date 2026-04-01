@@ -3,8 +3,10 @@
 ## BACKLOG
 
 - Rename session
-- Realtime sync with WebSockets
 - Player replacement mid-session
+- Realtime sync with WebSockets
+- Role-based access tied to login
+- Edit locked roster before session start
 
 ## Completed Features
 

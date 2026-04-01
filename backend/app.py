@@ -4,19 +4,33 @@ from __future__ import annotations
 
 import os
 import secrets
+import time
+import json
+import hmac
+import base64
+import hashlib
 from copy import deepcopy
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, Header, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from google.auth.transport.requests import Request as GoogleRequest
+from google.oauth2 import id_token as google_id_token
+from dotenv import load_dotenv
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 
-from database import SharedSessionRecord, get_db_session, init_db
+from database import SharedSessionRecord, UserRecord, get_db_session, init_db
 from roster_engine import generate_roster, validate_roster, RosterError
+
+load_dotenv(Path(__file__).with_name(".env"))
 
 app = FastAPI(title="Badminton Roster API")
 
 ADMIN_RECOVERY_TOKEN = os.getenv("ADMIN_RECOVERY_TOKEN", "thisismytoken")
+AUTH_SECRET = os.getenv("AUTH_SECRET", "badminton-dev-auth-secret")
+AUTH_TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 app.add_middleware(
     CORSMiddleware,
@@ -107,6 +121,7 @@ class SharedSessionResponse(BaseModel):
     ended_knockout_rounds: list[bool]
     can_undo: bool
     version: int
+    is_owner: bool = False
 
 
 class SharedSessionSummary(BaseModel):
@@ -119,6 +134,31 @@ class SharedSessionSummary(BaseModel):
     ended_rounds: int
     total_rounds: int
     live_rounds: int
+    can_manage: bool = False
+
+
+class UserSummary(BaseModel):
+    user_id: str
+    name: str
+    email: str
+
+
+class AuthRequest(BaseModel):
+    email: str
+    password: str
+
+
+class RegisterRequest(AuthRequest):
+    name: str
+
+
+class AuthResponse(BaseModel):
+    token: str
+    user: UserSummary
+
+
+class GoogleAuthRequest(BaseModel):
+    credential: str
 
 
 class RoundStartRequest(BaseModel):
@@ -164,6 +204,7 @@ def _ensure_score_slot(scores: list[list[dict[str, int | str]]], round_index: in
 
 def _upgrade_session_payload(payload: dict) -> dict:
     payload.setdefault("edit_token", secrets.token_urlsafe(12))
+    payload.setdefault("owner_user_id", None)
     league_round_count = len(payload.get("roster", {}).get("rounds", []))
     payload.setdefault("league_scores_by_round", [[] for _ in range(league_round_count)])
     payload.setdefault("active_league_round", -1)
@@ -178,20 +219,141 @@ def _upgrade_session_payload(payload: dict) -> dict:
     return payload
 
 
-def _serialize_session(record: SharedSessionRecord, edit_token: str | None = None) -> SharedSessionResponse:
+def _serialize_user(user: UserRecord) -> UserSummary:
+    return UserSummary(user_id=user.user_id, name=user.name, email=user.email)
+
+
+def _hash_password(password: str, salt: str | None = None) -> str:
+    salt_value = salt or secrets.token_hex(16)
+    password_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt_value.encode("utf-8"), 200_000)
+    return f"{salt_value}${password_hash.hex()}"
+
+
+def _verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        salt_value, digest = stored_hash.split("$", 1)
+    except ValueError:
+        return False
+
+    calculated_hash = _hash_password(password, salt_value).split("$", 1)[1]
+    return hmac.compare_digest(calculated_hash, digest)
+
+
+def _create_auth_token(user_id: str) -> str:
+    payload = {"user_id": user_id, "exp": int(time.time()) + AUTH_TOKEN_TTL_SECONDS}
+    encoded_payload = base64.urlsafe_b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8").rstrip("=")
+    signature = hmac.new(AUTH_SECRET.encode("utf-8"), encoded_payload.encode("utf-8"), hashlib.sha256).digest()
+    encoded_signature = base64.urlsafe_b64encode(signature).decode("utf-8").rstrip("=")
+    return f"{encoded_payload}.{encoded_signature}"
+
+
+def _decode_auth_token(token: str) -> dict | None:
+    try:
+        encoded_payload, encoded_signature = token.split(".", 1)
+        expected_signature = hmac.new(
+            AUTH_SECRET.encode("utf-8"),
+            encoded_payload.encode("utf-8"),
+            hashlib.sha256,
+        ).digest()
+        provided_signature = base64.urlsafe_b64decode(encoded_signature + "=" * (-len(encoded_signature) % 4))
+        if not hmac.compare_digest(expected_signature, provided_signature):
+            return None
+
+        payload_bytes = base64.urlsafe_b64decode(encoded_payload + "=" * (-len(encoded_payload) % 4))
+        payload = json.loads(payload_bytes.decode("utf-8"))
+        if payload.get("exp", 0) < int(time.time()):
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+def _get_current_user_from_header(authorization: str | None) -> UserRecord | None:
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+
+    token = authorization.split(" ", 1)[1].strip()
+    payload = _decode_auth_token(token)
+    if not payload or not payload.get("user_id"):
+        return None
+
+    with get_db_session() as db:
+        user = db.scalar(select(UserRecord).where(UserRecord.user_id == payload["user_id"]))
+        if not user:
+            return None
+        db.expunge(user)
+        return user
+
+
+def _require_current_user(authorization: str | None) -> UserRecord:
+    user = _get_current_user_from_header(authorization)
+    if not user:
+        raise HTTPException(status_code=401, detail="Login required")
+    return user
+
+
+def _upsert_google_user(credential: str) -> UserRecord:
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=503, detail="Google sign-in is not configured")
+
+    try:
+        token_info = google_id_token.verify_oauth2_token(
+            credential,
+            GoogleRequest(),
+            GOOGLE_CLIENT_ID,
+        )
+    except Exception:
+        raise HTTPException(status_code=401, detail="Google sign-in could not be verified")
+
+    email = (token_info.get("email") or "").strip().lower()
+    name = (token_info.get("name") or token_info.get("given_name") or email).strip()
+    if not email:
+        raise HTTPException(status_code=401, detail="Google account email is required")
+
+    with get_db_session() as db:
+        user = db.scalar(select(UserRecord).where(UserRecord.email == email))
+        if user:
+            if user.name != name and name:
+                user.name = name
+                db.add(user)
+                db.flush()
+                db.refresh(user)
+            db.expunge(user)
+            return user
+
+        user = UserRecord(
+            user_id=secrets.token_urlsafe(12),
+            email=email,
+            name=name,
+            password_hash="__google__",
+        )
+        db.add(user)
+        db.flush()
+        db.refresh(user)
+        db.expunge(user)
+        return user
+
+
+def _serialize_session(
+    record: SharedSessionRecord,
+    edit_token: str | None = None,
+    current_user: UserRecord | None = None,
+) -> SharedSessionResponse:
     payload = _upgrade_session_payload(deepcopy(record.data))
     can_undo = len(payload.get("undo_stack", [])) > 0
     response_payload = {
         key: value for key, value in payload.items() if key not in {"undo_stack", "edit_token"}
     }
-    can_edit = _is_valid_edit_token(payload, edit_token)
+    is_owner = current_user is not None and payload.get("owner_user_id") == current_user.user_id
+    can_edit = is_owner or _is_valid_edit_token(payload, edit_token)
     return SharedSessionResponse(
         session_id=record.session_id,
         created_at=record.created_at.isoformat(),
         updated_at=record.updated_at.isoformat(),
         can_edit=can_edit,
-        edit_token=edit_token if can_edit else None,
+        edit_token=payload.get("edit_token") if can_edit else None,
         can_undo=can_undo,
+        is_owner=is_owner,
         version=record.version,
         **response_payload,
     )
@@ -217,7 +379,7 @@ def _planned_knockout_rounds(draw_config: dict, pair_count: int) -> int:
     return 0
 
 
-def _serialize_session_summary(record: SharedSessionRecord) -> SharedSessionSummary:
+def _serialize_session_summary(record: SharedSessionRecord, current_user: UserRecord | None = None) -> SharedSessionSummary:
     payload = _upgrade_session_payload(deepcopy(record.data))
     draw_config = payload.get("draw_config", {})
     league_total = len(payload.get("roster", {}).get("rounds", []))
@@ -246,6 +408,7 @@ def _serialize_session_summary(record: SharedSessionRecord) -> SharedSessionSumm
         ended_rounds=ended_rounds,
         total_rounds=total_rounds,
         live_rounds=live_rounds,
+        can_manage=current_user is not None and payload.get("owner_user_id") == current_user.user_id,
     )
 
 
@@ -271,12 +434,26 @@ def _is_valid_edit_token(payload: dict, edit_token: str | None) -> bool:
     return edit_token == payload.get("edit_token") or edit_token == ADMIN_RECOVERY_TOKEN
 
 
-def _require_edit_access(payload: dict, edit_token: str | None):
-    if not _is_valid_edit_token(payload, edit_token):
+def _has_owner_access(payload: dict, current_user: UserRecord | None) -> bool:
+    return current_user is not None and payload.get("owner_user_id") == current_user.user_id
+
+
+def _require_edit_access(payload: dict, edit_token: str | None, current_user: UserRecord | None = None):
+    if not (_has_owner_access(payload, current_user) or _is_valid_edit_token(payload, edit_token)):
         raise HTTPException(status_code=403, detail="Scorer access required")
 
 
-def _update_session_record(session_id: str, updater, edit_token: str | None = None) -> SharedSessionResponse:
+def _require_owner_access(payload: dict, current_user: UserRecord | None):
+    if not _has_owner_access(payload, current_user):
+        raise HTTPException(status_code=403, detail="Owner access required")
+
+
+def _update_session_record(
+    session_id: str,
+    updater,
+    edit_token: str | None = None,
+    current_user: UserRecord | None = None,
+) -> SharedSessionResponse:
     with get_db_session() as db:
         record = db.scalar(
             select(SharedSessionRecord).where(SharedSessionRecord.session_id == session_id)
@@ -285,7 +462,7 @@ def _update_session_record(session_id: str, updater, edit_token: str | None = No
             raise HTTPException(status_code=404, detail="Shared session not found")
 
         next_payload = _upgrade_session_payload(deepcopy(record.data))
-        _require_edit_access(next_payload, edit_token)
+        _require_edit_access(next_payload, edit_token, current_user=current_user)
         updater(next_payload)
         record.data = next_payload
         record.version += 1
@@ -293,7 +470,7 @@ def _update_session_record(session_id: str, updater, edit_token: str | None = No
         db.flush()
         db.refresh(record)
         db.expunge(record)
-        return _serialize_session(record, edit_token=edit_token)
+        return _serialize_session(record, edit_token=edit_token, current_user=current_user)
 
 
 def _capture_undo_snapshot(payload: dict):
@@ -368,11 +545,62 @@ def api_generate(req: RosterRequest):
     )
 
 
+@app.post("/api/auth/register", response_model=AuthResponse)
+def register(req: RegisterRequest):
+    email = req.email.strip().lower()
+    if not email or len(req.password) < 8 or not req.name.strip():
+        raise HTTPException(status_code=422, detail="Name, email, and password are required")
+
+    with get_db_session() as db:
+        existing = db.scalar(select(UserRecord).where(UserRecord.email == email))
+        if existing:
+            raise HTTPException(status_code=409, detail="An account with that email already exists")
+
+        user = UserRecord(
+            user_id=secrets.token_urlsafe(12),
+            email=email,
+            name=req.name.strip(),
+            password_hash=_hash_password(req.password),
+        )
+        db.add(user)
+        db.flush()
+        db.refresh(user)
+        db.expunge(user)
+
+    return AuthResponse(token=_create_auth_token(user.user_id), user=_serialize_user(user))
+
+
+@app.post("/api/auth/login", response_model=AuthResponse)
+def login(req: AuthRequest):
+    email = req.email.strip().lower()
+    with get_db_session() as db:
+        user = db.scalar(select(UserRecord).where(UserRecord.email == email))
+        if not user or not _verify_password(req.password, user.password_hash):
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        db.expunge(user)
+
+    return AuthResponse(token=_create_auth_token(user.user_id), user=_serialize_user(user))
+
+
+@app.post("/api/auth/google", response_model=AuthResponse)
+def login_with_google(req: GoogleAuthRequest):
+    user = _upsert_google_user(req.credential)
+    return AuthResponse(token=_create_auth_token(user.user_id), user=_serialize_user(user))
+
+
+@app.get("/api/auth/me", response_model=UserSummary)
+def get_me(authorization: str | None = Header(default=None)):
+    user = _require_current_user(authorization)
+    return _serialize_user(user)
+
+
 @app.post("/api/sessions", response_model=SharedSessionResponse)
-def create_shared_session(req: SharedSessionCreateRequest):
+def create_shared_session(req: SharedSessionCreateRequest, authorization: str | None = Header(default=None)):
+    current_user = _require_current_user(authorization)
     payload = {
         "name": req.name or f"session-{secrets.token_hex(2)}",
         "edit_token": secrets.token_urlsafe(12),
+        "owner_user_id": current_user.user_id,
         "roster": req.roster.model_dump(),
         "draw_config": req.draw_config.model_dump(),
         "league_scores_by_round": _create_empty_scores(req.roster.rounds),
@@ -402,28 +630,44 @@ def create_shared_session(req: SharedSessionCreateRequest):
         db.flush()
         db.refresh(record)
         db.expunge(record)
-        return _serialize_session(record, edit_token=payload["edit_token"])
+        return _serialize_session(record, edit_token=payload["edit_token"], current_user=current_user)
 
 
 @app.get("/api/sessions/{session_id}", response_model=SharedSessionResponse)
-def get_shared_session(session_id: str, edit_token: str | None = None):
+def get_shared_session(
+    session_id: str,
+    edit_token: str | None = None,
+    authorization: str | None = Header(default=None),
+):
+    current_user = _get_current_user_from_header(authorization)
     record = _get_session_record(session_id)
-    return _serialize_session(record, edit_token=edit_token)
+    return _serialize_session(record, edit_token=edit_token, current_user=current_user)
 
 
 @app.get("/api/sessions", response_model=list[SharedSessionSummary])
-def list_shared_sessions():
+def list_shared_sessions(authorization: str | None = Header(default=None)):
+    current_user = _require_current_user(authorization)
     with get_db_session() as db:
         records = db.scalars(
             select(SharedSessionRecord).order_by(SharedSessionRecord.updated_at.desc())
         ).all()
         for record in records:
             db.expunge(record)
-        return [_serialize_session_summary(record) for record in records]
+        owned_records = []
+        for record in records:
+            payload = _upgrade_session_payload(deepcopy(record.data))
+            if payload.get("owner_user_id") == current_user.user_id:
+                owned_records.append(record)
+        return [_serialize_session_summary(record, current_user=current_user) for record in owned_records]
 
 
 @app.delete("/api/sessions/{session_id}", status_code=204)
-def delete_shared_session(session_id: str, edit_token: str | None = None):
+def delete_shared_session(
+    session_id: str,
+    edit_token: str | None = None,
+    authorization: str | None = Header(default=None),
+):
+    current_user = _get_current_user_from_header(authorization)
     with get_db_session() as db:
         record = db.scalar(
             select(SharedSessionRecord).where(SharedSessionRecord.session_id == session_id)
@@ -431,13 +675,19 @@ def delete_shared_session(session_id: str, edit_token: str | None = None):
         if not record:
             raise HTTPException(status_code=404, detail="Shared session not found")
         payload = _upgrade_session_payload(deepcopy(record.data))
-        _require_edit_access(payload, edit_token)
+        _require_owner_access(payload, current_user)
         db.delete(record)
     return Response(status_code=204)
 
 
 @app.post("/api/sessions/{session_id}/start-round", response_model=SharedSessionResponse)
-def start_round(session_id: str, req: RoundStartRequest, edit_token: str | None = None):
+def start_round(
+    session_id: str,
+    req: RoundStartRequest,
+    edit_token: str | None = None,
+    authorization: str | None = Header(default=None),
+):
+    current_user = _get_current_user_from_header(authorization)
     def updater(payload: dict):
         if req.stage == "league":
             current_round = payload["active_league_round"]
@@ -461,11 +711,17 @@ def start_round(session_id: str, req: RoundStartRequest, edit_token: str | None 
         _capture_undo_snapshot(payload)
         payload["active_knockout_round"] = req.round_index
 
-    return _update_session_record(session_id, updater, edit_token=edit_token)
+    return _update_session_record(session_id, updater, edit_token=edit_token, current_user=current_user)
 
 
 @app.post("/api/sessions/{session_id}/end-round", response_model=SharedSessionResponse)
-def end_round(session_id: str, req: RoundEndRequest, edit_token: str | None = None):
+def end_round(
+    session_id: str,
+    req: RoundEndRequest,
+    edit_token: str | None = None,
+    authorization: str | None = Header(default=None),
+):
+    current_user = _get_current_user_from_header(authorization)
     def updater(payload: dict):
         if req.stage == "league":
             if req.round_index < 0 or req.round_index > payload["active_league_round"]:
@@ -500,11 +756,12 @@ def end_round(session_id: str, req: RoundEndRequest, edit_token: str | None = No
         _capture_undo_snapshot(payload)
         payload["ended_knockout_rounds"][req.round_index] = True
 
-    return _update_session_record(session_id, updater, edit_token=edit_token)
+    return _update_session_record(session_id, updater, edit_token=edit_token, current_user=current_user)
 
 
 @app.post("/api/sessions/{session_id}/undo", response_model=SharedSessionResponse)
-def undo_last_change(session_id: str, edit_token: str | None = None):
+def undo_last_change(session_id: str, edit_token: str | None = None, authorization: str | None = Header(default=None)):
+    current_user = _get_current_user_from_header(authorization)
     def updater(payload: dict):
         if not payload["undo_stack"]:
             raise HTTPException(status_code=409, detail="Nothing to undo")
@@ -512,11 +769,17 @@ def undo_last_change(session_id: str, edit_token: str | None = None):
         snapshot = payload["undo_stack"].pop()
         _restore_undo_snapshot(payload, snapshot)
 
-    return _update_session_record(session_id, updater, edit_token=edit_token)
+    return _update_session_record(session_id, updater, edit_token=edit_token, current_user=current_user)
 
 
 @app.post("/api/sessions/{session_id}/edit-round", response_model=SharedSessionResponse)
-def edit_round(session_id: str, req: RoundEditRequest, edit_token: str | None = None):
+def edit_round(
+    session_id: str,
+    req: RoundEditRequest,
+    edit_token: str | None = None,
+    authorization: str | None = Header(default=None),
+):
+    current_user = _get_current_user_from_header(authorization)
     def updater(payload: dict):
         if req.stage == "league":
             if req.round_index < 0 or req.round_index >= len(payload["ended_league_rounds"]):
@@ -545,11 +808,17 @@ def edit_round(session_id: str, req: RoundEditRequest, edit_token: str | None = 
         payload["ended_knockout_rounds"][req.round_index] = False
         payload["active_knockout_round"] = req.round_index
 
-    return _update_session_record(session_id, updater, edit_token=edit_token)
+    return _update_session_record(session_id, updater, edit_token=edit_token, current_user=current_user)
 
 
 @app.post("/api/sessions/{session_id}/score", response_model=SharedSessionResponse)
-def update_score(session_id: str, req: ScoreUpdateRequest, edit_token: str | None = None):
+def update_score(
+    session_id: str,
+    req: ScoreUpdateRequest,
+    edit_token: str | None = None,
+    authorization: str | None = Header(default=None),
+):
+    current_user = _get_current_user_from_header(authorization)
     if req.team_key not in {"teamA", "teamB"}:
         raise HTTPException(status_code=400, detail="Invalid team key")
 
@@ -580,4 +849,4 @@ def update_score(session_id: str, req: ScoreUpdateRequest, edit_token: str | Non
         _capture_undo_snapshot(payload)
         court_score[req.team_key] = next_value
 
-    return _update_session_record(session_id, updater, edit_token=edit_token)
+    return _update_session_record(session_id, updater, edit_token=edit_token, current_user=current_user)

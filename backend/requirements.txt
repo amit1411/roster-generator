@@ -3,3 +3,6 @@ uvicorn[standard]
 gunicorn
 sqlalchemy
 psycopg[binary]
+google-auth
+requests
+python-dotenv

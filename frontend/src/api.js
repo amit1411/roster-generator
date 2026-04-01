@@ -8,6 +8,13 @@ function withEditToken(path, editToken) {
   return url.toString();
 }
 
+function createHeaders(authToken, extraHeaders = {}) {
+  return {
+    ...extraHeaders,
+    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+  };
+}
+
 export async function generateRoster(payload) {
   const res = await fetch(`${API_BASE}/api/generate`, {
     method: "POST",
@@ -32,8 +39,8 @@ async function readJson(res) {
   return res.json();
 }
 
-export async function createSharedSession(payload) {
-  const res = await fetch(`${API_BASE}/api/sessions`, {
+export async function register(payload) {
+  const res = await fetch(`${API_BASE}/api/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -42,19 +49,62 @@ export async function createSharedSession(payload) {
   return readJson(res);
 }
 
-export async function fetchSharedSession(sessionId, editToken) {
-  const res = await fetch(withEditToken(`/api/sessions/${sessionId}`, editToken));
+export async function login(payload) {
+  const res = await fetch(`${API_BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
   return readJson(res);
 }
 
-export async function listSharedSessions() {
-  const res = await fetch(`${API_BASE}/api/sessions`);
+export async function loginWithGoogle(credential) {
+  const res = await fetch(`${API_BASE}/api/auth/google`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ credential }),
+  });
+
   return readJson(res);
 }
 
-export async function deleteSharedSession(sessionId, editToken) {
+export async function fetchCurrentUser(authToken) {
+  const res = await fetch(`${API_BASE}/api/auth/me`, {
+    headers: createHeaders(authToken),
+  });
+
+  return readJson(res);
+}
+
+export async function createSharedSession(payload, authToken) {
+  const res = await fetch(`${API_BASE}/api/sessions`, {
+    method: "POST",
+    headers: createHeaders(authToken, { "Content-Type": "application/json" }),
+    body: JSON.stringify(payload),
+  });
+
+  return readJson(res);
+}
+
+export async function fetchSharedSession(sessionId, editToken, authToken) {
+  const res = await fetch(withEditToken(`/api/sessions/${sessionId}`, editToken), {
+    headers: createHeaders(authToken),
+  });
+  return readJson(res);
+}
+
+export async function listSharedSessions(authToken) {
+  const res = await fetch(`${API_BASE}/api/sessions`, {
+    headers: createHeaders(authToken),
+  });
+  return readJson(res);
+}
+
+export async function deleteSharedSession(sessionId, editToken, authToken) {
   const res = await fetch(withEditToken(`/api/sessions/${sessionId}`, editToken), {
     method: "DELETE",
+    headers: createHeaders(authToken),
   });
 
   if (!res.ok) {
@@ -63,48 +113,49 @@ export async function deleteSharedSession(sessionId, editToken) {
   }
 }
 
-export async function startSharedRound(sessionId, payload, editToken) {
+export async function startSharedRound(sessionId, payload, editToken, authToken) {
   const res = await fetch(withEditToken(`/api/sessions/${sessionId}/start-round`, editToken), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: createHeaders(authToken, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
 
   return readJson(res);
 }
 
-export async function endSharedRound(sessionId, payload, editToken) {
+export async function endSharedRound(sessionId, payload, editToken, authToken) {
   const res = await fetch(withEditToken(`/api/sessions/${sessionId}/end-round`, editToken), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: createHeaders(authToken, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
 
   return readJson(res);
 }
 
-export async function undoSharedSession(sessionId) {
+export async function undoSharedSession(sessionId, authToken) {
   const res = await fetch(`${API_BASE}/api/sessions/${sessionId}/undo`, {
     method: "POST",
+    headers: createHeaders(authToken),
   });
 
   return readJson(res);
 }
 
-export async function editSharedRound(sessionId, payload, editToken) {
+export async function editSharedRound(sessionId, payload, editToken, authToken) {
   const res = await fetch(withEditToken(`/api/sessions/${sessionId}/edit-round`, editToken), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: createHeaders(authToken, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
 
   return readJson(res);
 }
 
-export async function updateSharedScore(sessionId, payload, editToken) {
+export async function updateSharedScore(sessionId, payload, editToken, authToken) {
   const res = await fetch(withEditToken(`/api/sessions/${sessionId}/score`, editToken), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: createHeaders(authToken, { "Content-Type": "application/json" }),
     body: JSON.stringify(payload),
   });
 
