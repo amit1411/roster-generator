@@ -966,23 +966,24 @@ export default function App() {
           </div>
         ) : currentSession ? (
           <ScoringPage
+            key={currentSession.sessionId || "scoring-session"}
             roster={currentSession.roster}
             drawConfig={currentSession.drawConfig}
-                sessionName={currentSession.name}
-                canEdit={currentSession.canEdit}
-                leagueScoresByRound={currentSession.leagueScoresByRound}
-                activeLeagueRound={currentSession.activeLeagueRound}
-                endedLeagueRounds={currentSession.endedLeagueRounds}
-                knockoutScoresByRound={currentSession.knockoutScoresByRound}
-                activeKnockoutRound={currentSession.activeKnockoutRound}
-                endedKnockoutRounds={currentSession.endedKnockoutRounds}
-                onBack={handleBackToPlanner}
-                onEditRound={handleEditRound}
-                onStartRound={handleStartRound}
-                onEndRound={handleEndRound}
-                onScoreChange={handleScoreChange}
-                onScoreCommit={handleScoreCommit}
-              />
+            sessionName={currentSession.name}
+            canEdit={currentSession.canEdit}
+            leagueScoresByRound={currentSession.leagueScoresByRound}
+            activeLeagueRound={currentSession.activeLeagueRound}
+            endedLeagueRounds={currentSession.endedLeagueRounds}
+            knockoutScoresByRound={currentSession.knockoutScoresByRound}
+            activeKnockoutRound={currentSession.activeKnockoutRound}
+            endedKnockoutRounds={currentSession.endedKnockoutRounds}
+            onBack={handleBackToPlanner}
+            onEditRound={handleEditRound}
+            onStartRound={handleStartRound}
+            onEndRound={handleEndRound}
+            onScoreChange={handleScoreChange}
+            onScoreCommit={handleScoreCommit}
+          />
         ) : null}
       </main>
     </div>
