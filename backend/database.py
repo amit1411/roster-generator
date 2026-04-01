@@ -54,6 +54,31 @@ class SharedSessionRecord(Base):
     )
 
 
+class SessionRoundRecord(Base):
+    """Persisted per-round session state."""
+
+    __tablename__ = "session_rounds"
+
+    session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    stage: Mapped[str] = mapped_column(String(16), primary_key=True)
+    round_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    started: Mapped[bool] = mapped_column(default=False, nullable=False)
+    ended: Mapped[bool] = mapped_column(default=False, nullable=False)
+
+
+class SessionScoreRecord(Base):
+    """Persisted per-court score entry."""
+
+    __tablename__ = "session_scores"
+
+    session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    stage: Mapped[str] = mapped_column(String(16), primary_key=True)
+    round_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    court_index: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_a_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    team_b_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 engine = create_engine(DATABASE_URL, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
