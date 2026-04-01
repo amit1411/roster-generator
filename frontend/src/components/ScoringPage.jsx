@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   areEndedRoundsComplete,
@@ -252,6 +252,105 @@ function RankingTable({ title, emptyText, label, standings }) {
   );
 }
 
+function CollapsibleSection({ title, description, count, defaultOpen = false, children }) {
+  return (
+    <details className="group rounded-2xl border border-gray-200 bg-white shadow-sm" open={defaultOpen}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4">
+        <div>
+          <p className="text-base font-semibold text-gray-900">{title}</p>
+          {description ? <p className="mt-1 text-sm text-gray-500">{description}</p> : null}
+        </div>
+        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-600">{count}</span>
+      </summary>
+      <div className="border-t border-gray-100 p-5 pt-4">{children}</div>
+    </details>
+  );
+}
+
+function SummaryMetric({ label, value, tone = "default" }) {
+  const tones = {
+    default: "border-slate-200 bg-white text-slate-900",
+    indigo: "border-indigo-200 bg-indigo-50 text-indigo-900",
+    emerald: "border-emerald-200 bg-emerald-50 text-emerald-900",
+    amber: "border-amber-200 bg-amber-50 text-amber-900",
+  };
+
+  return (
+    <div className={`rounded-2xl border p-4 shadow-sm ${tones[tone]}`}>
+      <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</p>
+      <p className="mt-2 text-lg font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function SummaryCallout({ children }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 shadow-sm">
+      {children}
+    </div>
+  );
+}
+
+function TournamentSummary({
+  drawConfig,
+  sessionName,
+  totalRounds,
+  completedRounds,
+  champion,
+  pairStandings,
+  individualStandings,
+}) {
+  const topPair = pairStandings[0] || null;
+  const topPlayer = individualStandings[0] || null;
+  const isKnockout = drawConfig?.draw_type === "league_knockout";
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-3xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-6 shadow-sm">
+        <p className="text-sm font-semibold uppercase tracking-[0.25em] text-emerald-700">Tournament Results</p>
+        <h3 className="mt-2 text-2xl font-bold text-slate-900">Session complete</h3>
+        <p className="mt-2 max-w-3xl text-sm text-slate-600">
+          {sessionName} is wrapped up. Review the final standings, the winning pair, and the completed results from the
+          session here.
+        </p>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <SummaryMetric
+          label="Format"
+          value={drawConfig?.draw_type === "league_knockout" ? "League + Knockout" : "Round Robin"}
+          tone="indigo"
+        />
+        <SummaryMetric label="Rounds Completed" value={`${completedRounds} / ${totalRounds}`} tone="emerald" />
+        <SummaryMetric label="Top Pair In League" value={topPair ? topPair[0] : "No league pair standings yet"} tone="amber" />
+        <SummaryMetric label="Top Individual In League" value={topPlayer ? topPlayer[0] : "No league player standings yet"} />
+      </div>
+
+      <SummaryCallout>
+        League standings are based on completed league rounds only. Playoff matches decide the champion, but they do not
+        change the league table.
+      </SummaryCallout>
+
+      {isKnockout ? <ChampionCard winner={champion} /> : null}
+
+      <div className="grid gap-6 xl:grid-cols-2">
+        <RankingTable
+          title="Final League Pair Rankings"
+          emptyText="League pair rankings will appear after completed rounds."
+          label="Pair"
+          standings={pairStandings}
+        />
+        <RankingTable
+          title="Final League Individual Rankings"
+          emptyText="League individual rankings will appear after completed rounds."
+          label="Player"
+          standings={individualStandings}
+        />
+      </div>
+    </div>
+  );
+}
+
 function RoundList({
   title,
   rounds,
@@ -400,8 +499,9 @@ function RoundList({
   );
 }
 
-function PanelTabs({ activePanel, onChange, hasBracket }) {
+function PanelTabs({ activePanel, onChange, hasBracket, showSummary }) {
   const tabs = [
+    ...(showSummary ? [{ id: "summary", label: "Results" }] : []),
     { id: "matches", label: "Matches" },
     ...(hasBracket ? [{ id: "bracket", label: "Bracket" }] : []),
     { id: "rankings", label: "Rankings" },
@@ -467,7 +567,6 @@ export default function ScoringPage({
   onScoreChange,
   onScoreCommit,
 }) {
-  const [activePanel, setActivePanel] = useState("matches");
   const leagueRounds = roster.rounds.map((round) => ({
     ...round,
     label: `Round ${round.round}`,
@@ -496,6 +595,42 @@ export default function ScoringPage({
     activeKnockoutRound + 1 < knockoutRounds.length ? knockoutRounds[activeKnockoutRound + 1].label : null;
   const nextRoundLabel = nextLeagueRound || nextKnockoutRound;
   const hasBracket = drawConfig?.draw_type === "league_knockout";
+  const knockoutComplete =
+    hasBracket &&
+    leagueComplete &&
+    (knockoutRounds.length === 0 || areEndedRoundsComplete(knockoutRounds, knockoutScoresByRound, endedKnockoutRounds));
+  const sessionFinished = hasBracket ? knockoutComplete : leagueComplete;
+  const finalRound = knockoutRounds.at(-1);
+  const finalScore = finalRound ? knockoutScoresByRound[knockoutRounds.length - 1]?.[0] : null;
+  const champion =
+    finalRound && endedKnockoutRounds[knockoutRounds.length - 1]
+      ? getMatchWinner(finalScore, finalRound.courts[0])
+      : null;
+  const [activePanel, setActivePanel] = useState(() => (sessionFinished ? "summary" : "matches"));
+  const summaryActivationRef = useRef(sessionFinished ? `${sessionName}:${completedRounds}:${totalRounds}` : "");
+
+  useEffect(() => {
+    const activationKey = sessionFinished ? `${sessionName}:${completedRounds}:${totalRounds}` : "";
+
+    if (sessionFinished && summaryActivationRef.current !== activationKey) {
+      summaryActivationRef.current = activationKey;
+      const timeoutId = window.setTimeout(() => {
+        setActivePanel("summary");
+      }, 0);
+      return () => window.clearTimeout(timeoutId);
+    }
+
+    if (!sessionFinished) {
+      summaryActivationRef.current = "";
+    }
+
+    if (!sessionFinished && activePanel === "summary") {
+      const timeoutId = window.setTimeout(() => {
+        setActivePanel("matches");
+      }, 0);
+      return () => window.clearTimeout(timeoutId);
+    }
+  }, [activePanel, completedRounds, sessionFinished, sessionName, totalRounds]);
 
   const annotateRounds = (rounds, activeRound, endedRounds) =>
     rounds.map((round, roundIndex) => ({
@@ -549,7 +684,24 @@ export default function ScoringPage({
         </div>
       </div>
 
-      <PanelTabs activePanel={activePanel} onChange={setActivePanel} hasBracket={hasBracket} />
+      <PanelTabs
+        activePanel={activePanel}
+        onChange={setActivePanel}
+        hasBracket={hasBracket}
+        showSummary={sessionFinished}
+      />
+
+      {activePanel === "summary" && sessionFinished ? (
+        <TournamentSummary
+          drawConfig={drawConfig}
+          sessionName={sessionName}
+          totalRounds={totalRounds}
+          completedRounds={completedRounds}
+          champion={champion}
+          pairStandings={pairStandings}
+          individualStandings={individualStandings}
+        />
+      ) : null}
 
       {activePanel === "matches" ? (
         <div className="space-y-6">
@@ -724,7 +876,7 @@ export default function ScoringPage({
       ) : null}
 
       {activePanel === "rankings" ? (
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,340px)_minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="space-y-6">
           <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
             <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">Round Control</h3>
             <p className="mt-3 text-sm text-gray-600">
@@ -736,19 +888,32 @@ export default function ScoringPage({
             </div>
           </div>
 
-          <RankingTable
-            title="Individual Rankings"
-            emptyText="Individual rankings will appear once an ended league round is available."
-            label="Player"
-            standings={individualStandings}
-          />
+          <CollapsibleSection
+            title="League Pair Rankings"
+            description="Based on completed league rounds only. Playoff matches do not change this table."
+            count={pairStandings.length}
+            defaultOpen
+          >
+            <RankingTable
+              title="League Pair Rankings"
+              emptyText="League pair rankings will appear only after a pair has completed a match in an ended round."
+              label="Pair"
+              standings={pairStandings}
+            />
+          </CollapsibleSection>
 
-          <RankingTable
-            title="Pair Rankings"
-            emptyText="Pair rankings will appear only after a pair has completed a match in an ended league round."
-            label="Pair"
-            standings={pairStandings}
-          />
+          <CollapsibleSection
+            title="League Individual Rankings"
+            description="Based on completed league rounds only. Playoff matches do not change this table."
+            count={individualStandings.length}
+          >
+            <RankingTable
+              title="League Individual Rankings"
+              emptyText="League individual rankings will appear once an ended round is available."
+              label="Player"
+              standings={individualStandings}
+            />
+          </CollapsibleSection>
         </div>
       ) : null}
     </div>

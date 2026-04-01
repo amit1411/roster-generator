@@ -1,11 +1,11 @@
 ## TODO NEXT
 
+- Tournament summary / results page
 
 ## BACKLOG
 
 - Rename session
 - Realtime sync with WebSockets
-- Tournament summary / results page
 - Player replacement mid-session
 
 ## Completed Features
