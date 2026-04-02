@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import secrets
 import time
+from collections import defaultdict
 from copy import deepcopy
 
 from fastapi import FastAPI, HTTPException, Response
@@ -14,6 +15,10 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError
 
 from database import (
+    CompletedSessionStatsRecord,
+    PlayerPartnerSessionStatsRecord,
+    PlayerSessionStatsRecord,
+    PlayerStatsSummaryRecord,
     SessionRoundRecord,
     SessionScoreRecord,
     SharedSessionRecord,
@@ -127,6 +132,49 @@ class SharedSessionSummary(BaseModel):
     ended_rounds: int
     total_rounds: int
     live_rounds: int
+
+
+class PlayerStatsSummaryResponse(BaseModel):
+    player_name: str
+    sessions_played: int
+    matches_played: int
+    wins: int
+    losses: int
+    draws: int
+    points: int
+    point_difference: int
+    win_rate: float
+    last_session_at: str | None = None
+
+
+class PlayerSessionHistoryResponse(BaseModel):
+    session_id: str
+    session_name: str
+    draw_type: str
+    completed_at: str
+    matches_played: int
+    wins: int
+    losses: int
+    draws: int
+    points: int
+    point_difference: int
+
+
+class PlayerPartnerSummaryResponse(BaseModel):
+    partner_name: str
+    sessions_together: int
+    matches_played: int
+    wins: int
+    losses: int
+    draws: int
+    points: int
+    point_difference: int
+    win_rate: float
+
+
+class PlayerStatsDetailResponse(PlayerStatsSummaryResponse):
+    recent_sessions: list[PlayerSessionHistoryResponse]
+    partner_breakdown: list[PlayerPartnerSummaryResponse]
 
 
 class RoundStartRequest(BaseModel):
@@ -309,6 +357,438 @@ def _get_scores_by_round(db, session_id: str, stage: str, round_sizes: list[int]
             "teamB": "" if record.team_b_score is None else record.team_b_score,
         }
     return scores_by_round
+
+
+def _is_score_complete(score: dict | None) -> bool:
+    if not score:
+        return False
+    return score.get("teamA", "") != "" and score.get("teamB", "") != ""
+
+
+def _get_match_winner(score: dict | None, court: dict) -> list[str] | None:
+    if not _is_score_complete(score):
+        return None
+    if score["teamA"] == score["teamB"]:
+        return None
+    return court["team_a"] if score["teamA"] > score["teamB"] else court["team_b"]
+
+
+def _rank_stats_entries(entries):
+    return sorted(
+        entries,
+        key=lambda item: (
+            -item[1]["points"],
+            -item[1]["point_difference"],
+            -item[1]["wins"],
+            item[0],
+        ),
+    )
+
+
+def _build_pair_standings(rounds: list[dict], scores_by_round: list[list[dict]]):
+    standings = {}
+    for round_index, round_data in enumerate(rounds):
+        for court_index, court in enumerate(round_data.get("courts", [])):
+            score = scores_by_round[round_index][court_index] if round_index < len(scores_by_round) else None
+            if not _is_score_complete(score):
+                continue
+
+            team_a_key = " & ".join(court["team_a"])
+            team_b_key = " & ".join(court["team_b"])
+            standings.setdefault(team_a_key, {"points": 0, "wins": 0, "losses": 0, "point_difference": 0, "played": 0})
+            standings.setdefault(team_b_key, {"points": 0, "wins": 0, "losses": 0, "point_difference": 0, "played": 0})
+
+            point_delta = score["teamA"] - score["teamB"]
+            standings[team_a_key]["played"] += 1
+            standings[team_b_key]["played"] += 1
+            standings[team_a_key]["point_difference"] += point_delta
+            standings[team_b_key]["point_difference"] -= point_delta
+
+            if score["teamA"] == score["teamB"]:
+                continue
+            if score["teamA"] > score["teamB"]:
+                standings[team_a_key]["points"] += 2
+                standings[team_a_key]["wins"] += 1
+                standings[team_b_key]["losses"] += 1
+            else:
+                standings[team_b_key]["points"] += 2
+                standings[team_b_key]["wins"] += 1
+                standings[team_a_key]["losses"] += 1
+
+    return _rank_stats_entries(standings.items())
+
+
+def _create_knockout_round(label: str, round_number: int, matches: list[list[list[str]]]):
+    return {
+        "id": label.lower().replace(" ", "-"),
+        "label": label,
+        "round": round_number,
+        "courts": [{"team_a": team_a, "team_b": team_b} for team_a, team_b in matches],
+        "resting": [],
+    }
+
+
+def _build_knockout_rounds(
+    draw_config: dict,
+    roster_rounds: list[dict],
+    league_scores_by_round: list[list[dict]],
+    knockout_scores_by_round: list[list[dict]],
+    ended_league_rounds: list[bool],
+    ended_knockout_rounds: list[bool],
+):
+    if draw_config.get("draw_type") != "league_knockout":
+        return []
+    if roster_rounds and not all(ended_league_rounds):
+        return []
+
+    pair_standings = _build_pair_standings(roster_rounds, league_scores_by_round)
+    qualifier_count = min(draw_config.get("knockout_qualifiers", 4), len(pair_standings))
+    if qualifier_count < 2:
+        return []
+
+    seeds = [pair_name.split(" & ") for pair_name, _ in pair_standings[:qualifier_count]]
+    base_round = len(roster_rounds)
+
+    if qualifier_count == 2:
+        return [_create_knockout_round("Final", base_round + 1, [[seeds[0], seeds[1]]])]
+
+    semifinal_round = _create_knockout_round(
+        "Semifinals",
+        base_round + 1,
+        [[seeds[0], seeds[3]], [seeds[1], seeds[2]]],
+    )
+    rounds = [semifinal_round]
+    semifinal_scores = knockout_scores_by_round[0] if knockout_scores_by_round else []
+    semifinal_winners = []
+    for court_index, court in enumerate(semifinal_round["courts"]):
+        winner = _get_match_winner(
+            semifinal_scores[court_index] if court_index < len(semifinal_scores) else None,
+            court,
+        ) if ended_knockout_rounds[:1] and ended_knockout_rounds[0] else None
+        semifinal_winners.append(winner)
+
+    if semifinal_winners and all(semifinal_winners):
+        rounds.append(_create_knockout_round("Final", base_round + 2, [[semifinal_winners[0], semifinal_winners[1]]]))
+
+    return rounds
+
+
+def _iter_completed_matches(payload: dict, db, session_id: str):
+    roster_rounds = payload.get("roster", {}).get("rounds", [])
+    league_round_sizes = [len(round_data.get("courts", [])) for round_data in roster_rounds]
+    active_league_round, ended_league_rounds = _get_round_state(db, session_id, "league", len(roster_rounds))
+    del active_league_round
+    league_scores = _get_scores_by_round(db, session_id, "league", league_round_sizes)
+
+    for round_index, round_data in enumerate(roster_rounds):
+        if round_index >= len(ended_league_rounds) or not ended_league_rounds[round_index]:
+            continue
+        for court_index, court in enumerate(round_data.get("courts", [])):
+            score = league_scores[round_index][court_index] if round_index < len(league_scores) else None
+            if _is_score_complete(score):
+                yield {
+                    "stage": "league",
+                    "round_index": round_index,
+                    "court": court,
+                    "score": score,
+                }
+
+    active_knockout_round, ended_knockout_rounds = _get_round_state(db, session_id, "knockout", 0)
+    knockout_round_total = max(len(ended_knockout_rounds), active_knockout_round + 1)
+    if knockout_round_total <= 0:
+        return
+
+    knockout_scores = _get_scores_by_round(db, session_id, "knockout", [0 for _ in range(knockout_round_total)])
+    knockout_rounds = _build_knockout_rounds(
+        payload.get("draw_config", {}),
+        roster_rounds,
+        league_scores,
+        knockout_scores,
+        ended_league_rounds,
+        ended_knockout_rounds,
+    )
+
+    for round_index, round_data in enumerate(knockout_rounds):
+        if round_index >= len(ended_knockout_rounds) or not ended_knockout_rounds[round_index]:
+            continue
+        for court_index, court in enumerate(round_data.get("courts", [])):
+            score = knockout_scores[round_index][court_index] if round_index < len(knockout_scores) and court_index < len(knockout_scores[round_index]) else None
+            if _is_score_complete(score):
+                yield {
+                    "stage": "knockout",
+                    "round_index": round_index,
+                    "court": court,
+                    "score": score,
+                }
+
+
+def _get_session_completion_state(db, record: SharedSessionRecord, payload: dict):
+    draw_config = payload.get("draw_config", {})
+    league_total = len(payload.get("roster", {}).get("rounds", []))
+    knockout_total = _planned_knockout_rounds(draw_config, _count_league_pairs(payload))
+    total_rounds = league_total + knockout_total
+    active_league_round, ended_league_rounds = _get_round_state(db, record.session_id, "league", league_total)
+    active_knockout_round, ended_knockout_rounds = _get_round_state(db, record.session_id, "knockout", knockout_total)
+    ended_rounds = sum(1 for ended in ended_league_rounds if ended) + sum(1 for ended in ended_knockout_rounds if ended)
+
+    return {
+        "total_rounds": total_rounds,
+        "ended_rounds": ended_rounds,
+        "completed": total_rounds > 0 and ended_rounds >= total_rounds,
+        "active_league_round": active_league_round,
+        "active_knockout_round": active_knockout_round,
+    }
+
+
+def _delete_session_analytics(db, session_id: str):
+    session_summary = db.get(CompletedSessionStatsRecord, session_id)
+    if session_summary:
+        db.delete(session_summary)
+
+    for row in db.scalars(
+        select(PlayerSessionStatsRecord).where(PlayerSessionStatsRecord.session_id == session_id)
+    ).all():
+        db.delete(row)
+
+    for row in db.scalars(
+        select(PlayerPartnerSessionStatsRecord).where(PlayerPartnerSessionStatsRecord.session_id == session_id)
+    ).all():
+        db.delete(row)
+
+
+def _rebuild_player_stats_summary(db):
+    for row in db.scalars(select(PlayerStatsSummaryRecord)).all():
+        db.delete(row)
+
+    aggregates = {}
+    session_rows = db.scalars(
+        select(PlayerSessionStatsRecord).order_by(PlayerSessionStatsRecord.completed_at.desc())
+    ).all()
+
+    for row in session_rows:
+        aggregate = aggregates.setdefault(
+            row.player_name,
+            {
+                "sessions_played": 0,
+                "matches_played": 0,
+                "wins": 0,
+                "losses": 0,
+                "draws": 0,
+                "points": 0,
+                "point_difference": 0,
+                "last_session_at": None,
+            },
+        )
+        aggregate["sessions_played"] += 1
+        aggregate["matches_played"] += row.matches_played
+        aggregate["wins"] += row.wins
+        aggregate["losses"] += row.losses
+        aggregate["draws"] += row.draws
+        aggregate["points"] += row.points
+        aggregate["point_difference"] += row.point_difference
+        if aggregate["last_session_at"] is None or row.completed_at > aggregate["last_session_at"]:
+            aggregate["last_session_at"] = row.completed_at
+
+    for player_name, values in aggregates.items():
+        db.add(
+            PlayerStatsSummaryRecord(
+                player_name=player_name,
+                sessions_played=values["sessions_played"],
+                matches_played=values["matches_played"],
+                wins=values["wins"],
+                losses=values["losses"],
+                draws=values["draws"],
+                points=values["points"],
+                point_difference=values["point_difference"],
+                last_session_at=values["last_session_at"],
+            )
+        )
+
+
+def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict):
+    completion_state = _get_session_completion_state(db, record, payload)
+    existing_summary = db.get(CompletedSessionStatsRecord, record.session_id)
+
+    if not completion_state["completed"]:
+        if existing_summary:
+            _delete_session_analytics(db, record.session_id)
+            _rebuild_player_stats_summary(db)
+        return
+
+    if existing_summary and existing_summary.processed_version == record.version:
+        return
+
+    _delete_session_analytics(db, record.session_id)
+
+    player_totals = {}
+    partner_totals = {}
+    session_matches = list(_iter_completed_matches(payload, db, record.session_id))
+
+    for match in session_matches:
+        court = match["court"]
+        score = match["score"]
+        point_delta = score["teamA"] - score["teamB"]
+
+        for player in court["team_a"] + court["team_b"]:
+            player_totals.setdefault(
+                player,
+                {"matches_played": 0, "wins": 0, "losses": 0, "draws": 0, "points": 0, "point_difference": 0},
+            )
+
+        for player in court["team_a"]:
+            player_totals[player]["matches_played"] += 1
+            player_totals[player]["point_difference"] += point_delta
+        for player in court["team_b"]:
+            player_totals[player]["matches_played"] += 1
+            player_totals[player]["point_difference"] -= point_delta
+
+        pairings = [
+            (court["team_a"][0], court["team_a"][1]) if len(court["team_a"]) == 2 else None,
+            (court["team_b"][0], court["team_b"][1]) if len(court["team_b"]) == 2 else None,
+        ]
+        for pair in pairings:
+            if not pair:
+                continue
+            for player, partner, delta in ((pair[0], pair[1], point_delta), (pair[1], pair[0], point_delta)):
+                partner_totals.setdefault(
+                    (player, partner),
+                    {"matches_played": 0, "wins": 0, "losses": 0, "draws": 0, "points": 0, "point_difference": 0},
+                )
+                partner_totals[(player, partner)]["matches_played"] += 1
+                partner_totals[(player, partner)]["point_difference"] += delta if player in court["team_a"] else -delta
+
+        winner = _get_match_winner(score, court)
+        if not winner:
+            for player in court["team_a"] + court["team_b"]:
+                player_totals[player]["draws"] += 1
+            for pair in pairings:
+                if not pair:
+                    continue
+                for player, partner in ((pair[0], pair[1]), (pair[1], pair[0])):
+                    partner_totals[(player, partner)]["draws"] += 1
+            continue
+
+        losers = court["team_b"] if winner == court["team_a"] else court["team_a"]
+        for player in winner:
+            player_totals[player]["wins"] += 1
+            player_totals[player]["points"] += 2
+        for player in losers:
+            player_totals[player]["losses"] += 1
+
+        winning_pair = tuple(winner) if len(winner) == 2 else None
+        losing_pair = tuple(losers) if len(losers) == 2 else None
+        if winning_pair:
+            for player, partner in ((winning_pair[0], winning_pair[1]), (winning_pair[1], winning_pair[0])):
+                partner_totals[(player, partner)]["wins"] += 1
+                partner_totals[(player, partner)]["points"] += 2
+        if losing_pair:
+            for player, partner in ((losing_pair[0], losing_pair[1]), (losing_pair[1], losing_pair[0])):
+                partner_totals[(player, partner)]["losses"] += 1
+
+    completed_at = record.updated_at
+    draw_type = payload.get("draw_config", {}).get("draw_type", "round_robin")
+    league_rounds = payload.get("roster", {}).get("rounds", [])
+    league_scores = _get_scores_by_round(db, record.session_id, "league", [len(round_data.get("courts", [])) for round_data in league_rounds])
+    pair_standings = _build_pair_standings(league_rounds, league_scores)
+    top_pair = pair_standings[0][0] if pair_standings else None
+
+    ranked_players = _rank_stats_entries(player_totals.items())
+    top_player = ranked_players[0][0] if ranked_players else None
+
+    knockout_matches = [match for match in session_matches if match["stage"] == "knockout"]
+    champion_pair = None
+    if knockout_matches:
+        final_match = knockout_matches[-1]
+        champion = _get_match_winner(final_match["score"], final_match["court"])
+        champion_pair = " & ".join(champion) if champion else None
+    if not champion_pair:
+        champion_pair = top_pair
+
+    db.add(
+        CompletedSessionStatsRecord(
+            session_id=record.session_id,
+            session_name=record.name,
+            draw_type=draw_type,
+            processed_version=record.version,
+            total_matches=len(session_matches),
+            total_players=len(player_totals),
+            top_player=top_player,
+            top_pair=top_pair,
+            champion_pair=champion_pair,
+            completed_at=completed_at,
+        )
+    )
+
+    for player_name, totals in player_totals.items():
+        db.add(
+            PlayerSessionStatsRecord(
+                session_id=record.session_id,
+                player_name=player_name,
+                session_name=record.name,
+                draw_type=draw_type,
+                completed_at=completed_at,
+                matches_played=totals["matches_played"],
+                wins=totals["wins"],
+                losses=totals["losses"],
+                draws=totals["draws"],
+                points=totals["points"],
+                point_difference=totals["point_difference"],
+            )
+        )
+
+    for (player_name, partner_name), totals in partner_totals.items():
+        db.add(
+            PlayerPartnerSessionStatsRecord(
+                session_id=record.session_id,
+                player_name=player_name,
+                partner_name=partner_name,
+                matches_played=totals["matches_played"],
+                wins=totals["wins"],
+                losses=totals["losses"],
+                draws=totals["draws"],
+                points=totals["points"],
+                point_difference=totals["point_difference"],
+            )
+        )
+
+    _rebuild_player_stats_summary(db)
+
+
+def _ensure_completed_session_stats(db):
+    records = db.scalars(select(SharedSessionRecord).order_by(SharedSessionRecord.updated_at.desc())).all()
+    touched = False
+    for record in records:
+        payload = _upgrade_session_payload(deepcopy(record.data))
+        payload = _hydrate_legacy_session_storage(db, record, payload)
+        existing_summary = db.get(CompletedSessionStatsRecord, record.session_id)
+        completion_state = _get_session_completion_state(db, record, payload)
+        needs_sync = (
+            completion_state["completed"] and (
+                not existing_summary or existing_summary.processed_version != record.version
+            )
+        ) or (not completion_state["completed"] and existing_summary is not None)
+        if needs_sync:
+            _sync_completed_session_stats(db, record, payload)
+            touched = True
+
+    if touched:
+        db.flush()
+
+
+def _to_player_stats_summary_response(row: PlayerStatsSummaryRecord) -> PlayerStatsSummaryResponse:
+    win_rate = round((row.wins / row.matches_played) * 100, 1) if row.matches_played else 0.0
+    return PlayerStatsSummaryResponse(
+        player_name=row.player_name,
+        sessions_played=row.sessions_played,
+        matches_played=row.matches_played,
+        wins=row.wins,
+        losses=row.losses,
+        draws=row.draws,
+        points=row.points,
+        point_difference=row.point_difference,
+        win_rate=win_rate,
+        last_session_at=row.last_session_at.isoformat() if row.last_session_at else None,
+    )
 
 
 def _serialize_session(record: SharedSessionRecord, edit_token: str | None = None, db=None) -> SharedSessionResponse:
@@ -569,6 +1049,7 @@ def _update_session_record(session_id: str, updater, edit_token: str | None = No
                 db.add(record)
                 db.flush()
                 db.refresh(record)
+                _sync_completed_session_stats(db, record, next_payload)
                 return (
                     response_builder(record, db)
                     if response_builder
@@ -684,6 +1165,103 @@ def list_shared_sessions():
         return [_serialize_session_summary(record, db=db) for record in records]
 
 
+@app.get("/api/stats/players", response_model=list[PlayerStatsSummaryResponse])
+def list_player_stats():
+    with get_db_session() as db:
+        _ensure_completed_session_stats(db)
+        rows = db.scalars(
+            select(PlayerStatsSummaryRecord).order_by(
+                PlayerStatsSummaryRecord.points.desc(),
+                PlayerStatsSummaryRecord.point_difference.desc(),
+                PlayerStatsSummaryRecord.wins.desc(),
+                PlayerStatsSummaryRecord.player_name.asc(),
+            )
+        ).all()
+        return [_to_player_stats_summary_response(row) for row in rows]
+
+
+@app.get("/api/stats/players/{player_name}", response_model=PlayerStatsDetailResponse)
+def get_player_stats(player_name: str):
+    with get_db_session() as db:
+        _ensure_completed_session_stats(db)
+        summary_row = db.get(PlayerStatsSummaryRecord, player_name)
+        if not summary_row:
+            raise HTTPException(status_code=404, detail="Player stats not found")
+
+        session_rows = db.scalars(
+            select(PlayerSessionStatsRecord)
+            .where(PlayerSessionStatsRecord.player_name == player_name)
+            .order_by(PlayerSessionStatsRecord.completed_at.desc())
+        ).all()
+        partner_rows = db.scalars(
+            select(PlayerPartnerSessionStatsRecord)
+            .where(PlayerPartnerSessionStatsRecord.player_name == player_name)
+        ).all()
+
+        partner_totals = defaultdict(
+            lambda: {
+                "sessions_together": 0,
+                "matches_played": 0,
+                "wins": 0,
+                "losses": 0,
+                "draws": 0,
+                "points": 0,
+                "point_difference": 0,
+            }
+        )
+        partner_sessions = defaultdict(set)
+        for row in partner_rows:
+            partner_totals[row.partner_name]["matches_played"] += row.matches_played
+            partner_totals[row.partner_name]["wins"] += row.wins
+            partner_totals[row.partner_name]["losses"] += row.losses
+            partner_totals[row.partner_name]["draws"] += row.draws
+            partner_totals[row.partner_name]["points"] += row.points
+            partner_totals[row.partner_name]["point_difference"] += row.point_difference
+            partner_sessions[row.partner_name].add(row.session_id)
+
+        partner_breakdown = []
+        for partner_name, totals in partner_totals.items():
+            matches_played = totals["matches_played"]
+            partner_breakdown.append(
+                PlayerPartnerSummaryResponse(
+                    partner_name=partner_name,
+                    sessions_together=len(partner_sessions[partner_name]),
+                    matches_played=matches_played,
+                    wins=totals["wins"],
+                    losses=totals["losses"],
+                    draws=totals["draws"],
+                    points=totals["points"],
+                    point_difference=totals["point_difference"],
+                    win_rate=round((totals["wins"] / matches_played) * 100, 1) if matches_played else 0.0,
+                )
+            )
+
+        partner_breakdown.sort(
+            key=lambda row: (-row.points, -row.point_difference, -row.wins, row.partner_name)
+        )
+
+        summary = _to_player_stats_summary_response(summary_row)
+        return PlayerStatsDetailResponse(
+            **summary.model_dump(),
+            recent_sessions=[
+                PlayerSessionHistoryResponse(
+                    session_id=row.session_id,
+                    session_name=row.session_name,
+                    draw_type=row.draw_type,
+                    completed_at=row.completed_at.isoformat(),
+                    matches_played=row.matches_played,
+                    wins=row.wins,
+                    losses=row.losses,
+                    draws=row.draws,
+                    points=row.points,
+                    point_difference=row.point_difference,
+                )
+                for row in session_rows[:12]
+            ],
+            partner_breakdown=partner_breakdown[:12],
+        )
+
+
 @app.delete("/api/sessions/{session_id}", status_code=204)
 def delete_shared_session(session_id: str, edit_token: str | None = None):
     with get_db_session() as db:
@@ -704,6 +1282,8 @@ def delete_shared_session(session_id: str, edit_token: str | None = None):
         ).all()
         for score_record in score_records:
             db.delete(score_record)
+        _delete_session_analytics(db, session_id)
+        _rebuild_player_stats_summary(db)
         db.delete(record)
     return Response(status_code=204)
 

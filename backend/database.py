@@ -79,6 +79,73 @@ class SessionScoreRecord(Base):
     team_b_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class CompletedSessionStatsRecord(Base):
+    """Analytics snapshot for a completed session."""
+
+    __tablename__ = "completed_session_stats"
+
+    session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    session_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    draw_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    processed_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_matches: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_players: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    top_player: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    top_pair: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    champion_pair: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    completed_at: Mapped[str] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PlayerSessionStatsRecord(Base):
+    """Per-player stats for a completed session."""
+
+    __tablename__ = "player_session_stats"
+
+    session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    session_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    draw_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    completed_at: Mapped[str] = mapped_column(DateTime(timezone=True), nullable=False)
+    matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    point_difference: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class PlayerPartnerSessionStatsRecord(Base):
+    """Per-player/per-partner stats for a completed session."""
+
+    __tablename__ = "player_partner_session_stats"
+
+    session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    partner_name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    point_difference: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class PlayerStatsSummaryRecord(Base):
+    """All-time aggregate stats across completed sessions."""
+
+    __tablename__ = "player_stats_summary"
+
+    player_name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    sessions_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    point_difference: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_session_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 engine = create_engine(DATABASE_URL, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 

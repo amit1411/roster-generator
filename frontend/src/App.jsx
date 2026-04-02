@@ -4,14 +4,18 @@ import ConfigPanel from "./components/ConfigPanel";
 import RosterTable from "./components/RosterTable";
 import DownloadCSV from "./components/DownloadCSV";
 import ScoringPage from "./components/ScoringPage";
+import HistoryPage from "./components/HistoryPage";
+import PlayerStatsPage from "./components/PlayerStatsPage";
 import {
   batchUpdateSharedScores,
   createSharedSession,
   deleteSharedSession,
   editSharedRound,
+  fetchPlayerStats,
   endSharedRound,
   fetchSharedSession,
   generateRoster,
+  listPlayerStats,
   renameSharedSession,
   listSharedSessions,
   startSharedRound,
@@ -39,7 +43,6 @@ const DEFAULT_PAIRS = [
 const PLANNER_STORAGE_KEY = "badminton-roster:planner";
 const SESSION_STORAGE_KEY = "badminton-roster:session";
 const SESSION_ACCESS_STORAGE_KEY = "badminton-roster:session-access";
-const VIEW_STORAGE_KEY = "badminton-roster:view";
 const SESSION_POLL_INTERVAL_MS = 12000;
 const ACTIVE_EDIT_GRACE_MS = 15000;
 const PLAIN_SESSION_WAIT_LABELS = new Set([
@@ -109,6 +112,14 @@ function getLeagueRequestPayload(players, fixedPairs, config) {
 
 function getSessionContextFromUrl() {
   if (typeof window === "undefined") return null;
+  const sessionPathMatch = window.location.pathname.match(/^\/sessions\/([^/]+)$/);
+  if (sessionPathMatch) {
+    return {
+      sessionId: decodeURIComponent(sessionPathMatch[1]),
+      editToken: new URLSearchParams(window.location.search).get("edit"),
+    };
+  }
+
   const params = new URLSearchParams(window.location.search);
   const sessionId = params.get("session");
   if (!sessionId) return null;
@@ -119,33 +130,56 @@ function getSessionContextFromUrl() {
   };
 }
 
-function setSessionIdInUrl(sessionId, editToken = null) {
-  if (typeof window === "undefined") return;
+function buildSessionPath(sessionId, editToken = null) {
+  const encodedSessionId = encodeURIComponent(sessionId);
+  const search = editToken ? `?edit=${encodeURIComponent(editToken)}` : "";
+  return `/sessions/${encodedSessionId}${search}`;
+}
 
-  const url = new URL(window.location.href);
-  if (sessionId) {
-    url.searchParams.set("session", sessionId);
+function setSessionIdInUrl(sessionId, editToken = null, replace = true) {
+  if (typeof window === "undefined") return;
+  const nextUrl = sessionId ? buildSessionPath(sessionId, editToken) : "/";
+
+  if (replace) {
+    window.history.replaceState({}, "", nextUrl);
   } else {
-    url.searchParams.delete("session");
+    window.history.pushState({}, "", nextUrl);
   }
-  if (editToken) {
-    url.searchParams.set("edit", editToken);
-  } else {
-    url.searchParams.delete("edit");
-  }
-  window.history.replaceState({}, "", url);
 }
 
 function buildShareUrl(sessionId, editToken = null) {
   if (typeof window === "undefined" || !sessionId) return "";
   const url = new URL(window.location.href);
-  url.searchParams.set("session", sessionId);
-  if (editToken) {
-    url.searchParams.set("edit", editToken);
-  } else {
-    url.searchParams.delete("edit");
-  }
+  url.pathname = `/sessions/${encodeURIComponent(sessionId)}`;
+  url.search = editToken ? `?edit=${encodeURIComponent(editToken)}` : "";
   return url.toString();
+}
+
+function getRouteFromLocation() {
+  if (typeof window === "undefined") {
+    return { name: "planner" };
+  }
+
+  const { pathname } = window.location;
+  const sessionContext = getSessionContextFromUrl();
+
+  if (sessionContext?.sessionId) {
+    return { name: "session", sessionId: sessionContext.sessionId, editToken: sessionContext.editToken };
+  }
+
+  if (pathname === "/history") {
+    return { name: "history" };
+  }
+
+  const playerMatch = pathname.match(/^\/players\/([^/]+)$/);
+  if (playerMatch) {
+    return {
+      name: "player-stats",
+      playerId: decodeURIComponent(playerMatch[1]),
+    };
+  }
+
+  return { name: "planner" };
 }
 
 function formatSessionTime(value) {
@@ -505,7 +539,7 @@ export default function App() {
   const plannerState = readStorage(PLANNER_STORAGE_KEY, null);
   const savedSession = readStorage(SESSION_STORAGE_KEY, null);
   const savedSessionAccess = readStorage(SESSION_ACCESS_STORAGE_KEY, {});
-  const initialView = readStorage(VIEW_STORAGE_KEY, "planner");
+  const initialRoute = getRouteFromLocation();
 
   const [players, setPlayers] = useState(plannerState?.players || DEFAULT_PLAYERS);
   const [fixedPairs, setFixedPairs] = useState(plannerState?.fixedPairs || DEFAULT_PAIRS);
@@ -517,7 +551,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [generateError, setGenerateError] = useState(null);
   const [currentSession, setCurrentSession] = useState(normalizeSession(savedSession));
-  const [view, setView] = useState(initialView);
+  const [route, setRoute] = useState(initialRoute);
   const [plannerMode, setPlannerMode] = useState("generate");
   const [plannerStep, setPlannerStep] = useState(1);
   const [sessionDraftName, setSessionDraftName] = useState(createSessionName());
@@ -532,6 +566,10 @@ export default function App() {
   const [renameValue, setRenameValue] = useState("");
   const [renameLoading, setRenameLoading] = useState(false);
   const [shareFeedback, setShareFeedback] = useState({ sessionId: null, text: "" });
+  const [playerStats, setPlayerStats] = useState([]);
+  const [playerStatsLoading, setPlayerStatsLoading] = useState(false);
+  const [playerStatsDetail, setPlayerStatsDetail] = useState(null);
+  const [playerStatsDetailLoading, setPlayerStatsDetailLoading] = useState(false);
   const timerRef = useRef(null);
   const sessionTimerRef = useRef(null);
   const reviewStepRef = useRef(null);
@@ -576,38 +614,66 @@ export default function App() {
   }, [sessionAccess]);
 
   useEffect(() => {
-    writeStorage(VIEW_STORAGE_KEY, view);
-  }, [view]);
-
-  useEffect(() => {
     loadSessions();
   }, []);
 
   useEffect(() => {
-    if (view === "planner") {
+    if (route.name === "planner" || route.name === "history") {
       loadSessions();
     }
-  }, [view]);
+  }, [route.name]);
 
   useEffect(() => {
-    const urlSession = getSessionContextFromUrl();
-    if (!urlSession?.sessionId) return;
+    if (route.name === "history" || route.name === "player-stats") {
+      loadPlayerStats();
+    }
+  }, [route.name]);
+
+  useEffect(() => {
+    if (route.name === "player-stats") {
+      loadPlayerStatsDetail(route.playerId);
+      return;
+    }
+
+    setPlayerStatsDetail(null);
+    setPlayerStatsDetailLoading(false);
+  }, [route.name, route.playerId]);
+
+  useEffect(() => {
+    const handlePopState = () => setRoute(getRouteFromLocation());
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (route.name !== "session" || !route.sessionId) return;
+    if (
+      currentSession?.sessionId === route.sessionId &&
+      (route.editToken || null) === (currentSession.editToken || null)
+    ) {
+      return;
+    }
 
     setSessionLoadingLabel("Opening shared session...");
     setSessionLoading(true);
-    fetchSharedSession(urlSession.sessionId, urlSession.editToken)
+    fetchSharedSession(route.sessionId, route.editToken)
       .then((session) => {
         const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
         rememberSessionAccess(normalized.sessionId, normalized.editToken);
         setCurrentSession(normalized);
-        setView("scoring");
         setError(null);
+
+        const hasLegacyUrl = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("session");
+        if (hasLegacyUrl) {
+          setSessionIdInUrl(normalized.sessionId, normalized.editToken, true);
+        }
       })
       .catch((err) => {
         setError(err.message);
       })
       .finally(() => setSessionLoading(false));
-  }, []);
+  }, [route.editToken, route.name, route.sessionId]);
 
   useEffect(() => {
     if (!currentSession?.sessionId) return;
@@ -634,10 +700,47 @@ export default function App() {
   }, [currentSession?.editToken, currentSession?.sessionId, currentSession?.version]);
 
   useEffect(() => {
-    if (view === "scoring" && !currentSession && !sessionLoading) {
-      setView("planner");
+    if (route.name === "session" && !currentSession && !sessionLoading) {
+      setRoute({ name: "planner" });
+      if (typeof window !== "undefined" && window.location.pathname !== "/") {
+        window.history.replaceState({}, "", "/");
+      }
     }
-  }, [view, currentSession, sessionLoading]);
+  }, [route.name, currentSession, sessionLoading]);
+
+  function navigateTo(path, nextRoute, { replace = false } = {}) {
+    if (typeof window !== "undefined") {
+      if (replace) {
+        window.history.replaceState({}, "", path);
+      } else {
+        window.history.pushState({}, "", path);
+      }
+    }
+    setRoute(nextRoute);
+  }
+
+  function openPlannerHome() {
+    navigateTo("/", { name: "planner" });
+  }
+
+  function openHistoryHome() {
+    navigateTo("/history", { name: "history" });
+  }
+
+  function openPlayerStats(playerId = "overview") {
+    navigateTo(`/players/${encodeURIComponent(playerId)}`, {
+      name: "player-stats",
+      playerId,
+    });
+  }
+
+  function openSessionRoute(sessionId, editToken = null) {
+    navigateTo(buildSessionPath(sessionId, editToken), {
+      name: "session",
+      sessionId,
+      editToken,
+    });
+  }
 
   function enqueueScoreMutation(task) {
     const nextOperation = scoreMutationQueueRef.current.then(task, task);
@@ -653,7 +756,7 @@ export default function App() {
       const result = await generateRoster(getLeagueRequestPayload(players, fixedPairs, config));
       setRoster(result);
       setPlannerStep(3);
-      setView("planner");
+      setRoute({ name: "planner" });
     } catch (e) {
       setGenerateError(e.message);
       setRoster(null);
@@ -696,6 +799,36 @@ export default function App() {
     }
   }
 
+  async function loadPlayerStats() {
+    setPlayerStatsLoading(true);
+    try {
+      const rows = await listPlayerStats();
+      setPlayerStats(rows);
+    } catch (e) {
+      setError((currentError) => currentError || e.message);
+    } finally {
+      setPlayerStatsLoading(false);
+    }
+  }
+
+  async function loadPlayerStatsDetail(playerId) {
+    if (!playerId || playerId === "overview") {
+      setPlayerStatsDetail(null);
+      return;
+    }
+
+    setPlayerStatsDetailLoading(true);
+    try {
+      const detail = await fetchPlayerStats(playerId);
+      setPlayerStatsDetail(detail);
+    } catch (e) {
+      setError((currentError) => currentError || e.message);
+      setPlayerStatsDetail(null);
+    } finally {
+      setPlayerStatsDetailLoading(false);
+    }
+  }
+
   async function handleLockRoster() {
     if (!roster) return;
 
@@ -719,8 +852,7 @@ export default function App() {
       setPlannerMode("generate");
       setPlannerStep(1);
       setSessionDraftName(createSessionName());
-      setSessionIdInUrl(normalized.sessionId, normalized.editToken);
-      setView("scoring");
+      openSessionRoute(normalized.sessionId, normalized.editToken);
       await loadSessions();
     } catch (e) {
       setError(e.message);
@@ -741,8 +873,7 @@ export default function App() {
       );
       rememberSessionAccess(latest.sessionId, latest.editToken);
       setCurrentSession(latest);
-      setSessionIdInUrl(latest.sessionId, latest.editToken);
-      setView("scoring");
+      openSessionRoute(latest.sessionId, latest.editToken);
       await loadSessions();
     } catch (e) {
       setError(e.message);
@@ -754,7 +885,7 @@ export default function App() {
   function handleBackToPlanner() {
     setPlannerMode("generate");
     setPlannerStep(roster ? 3 : 1);
-    setView("planner");
+    openPlannerHome();
   }
 
   function showGenerateMode() {
@@ -848,8 +979,7 @@ export default function App() {
       });
       if (currentSession?.sessionId === sessionId) {
         setCurrentSession(null);
-        setSessionIdInUrl(null);
-        setView("planner");
+        openPlannerHome();
       }
     } catch (e) {
       setError(e.message);
@@ -1033,6 +1163,8 @@ export default function App() {
 
   const canContinueFromPlayers = players.length >= 4;
   const canContinueFromSettings = config.num_courts >= 1;
+  const activeSessions = sessions.filter((session) => session.status !== "completed");
+  const completedSessions = sessions.filter((session) => session.status === "completed");
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1040,11 +1172,47 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-xl font-bold text-gray-900">Badminton</h1>
+            <p className="mt-1 text-sm text-gray-500">Planner, live scoring, and a dedicated home for history.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={openPlannerHome}
+              className={`inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
+                route.name === "planner"
+                  ? "bg-indigo-600 text-white"
+                  : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              Planner
+            </button>
+            <button
+              type="button"
+              onClick={openHistoryHome}
+              className={`inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
+                route.name === "history"
+                  ? "bg-sky-600 text-white"
+                  : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              History
+            </button>
+            <button
+              type="button"
+              onClick={() => openPlayerStats("overview")}
+              className={`inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
+                route.name === "player-stats"
+                  ? "bg-amber-500 text-white"
+                  : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              Player Stats
+            </button>
           </div>
         </div>
       </header>
 
-      {sessionLoading && view === "scoring" ? (
+      {sessionLoading && route.name === "session" ? (
         <div className="fixed inset-x-4 bottom-4 z-50 sm:inset-x-auto sm:right-4 sm:top-20 sm:bottom-auto sm:w-[360px]">
           <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-lg">
             <p className="text-sm font-medium text-blue-700">{sessionWaitText(sessionLoadingLabel)}</p>
@@ -1064,7 +1232,7 @@ export default function App() {
           </div>
         )}
 
-        {sessionLoading && view !== "scoring" && (
+        {sessionLoading && route.name !== "session" && (
           <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
             <p className="text-sm text-blue-700 font-medium">{sessionWaitText(sessionLoadingLabel)}</p>
             {sessionElapsed >= 5 && !PLAIN_SESSION_WAIT_LABELS.has(sessionLoadingLabel) ? (
@@ -1073,7 +1241,7 @@ export default function App() {
           </div>
         )}
 
-        {view === "planner" ? (
+        {route.name === "planner" ? (
           <div className="space-y-8">
             <section className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-600 via-indigo-500 to-sky-500 p-5 text-white shadow-sm sm:p-6">
               <div className="flex flex-col gap-5">
@@ -1092,8 +1260,8 @@ export default function App() {
                     onClick={showGenerateMode}
                   />
                   <PlannerModeCard
-                    title="Existing Sessions"
-                    description="Open, share, or remove saved sessions."
+                    title="Active Sessions"
+                    description="Resume, share, rename, or clean up current and in-progress sessions."
                     active={plannerMode === "sessions"}
                     onClick={showSessionsMode}
                   />
@@ -1126,7 +1294,7 @@ export default function App() {
                           onClick={() => setPlannerMode("sessions")}
                           className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
                         >
-                          View Existing Sessions
+                          View Active Sessions
                         </button>
                         <button
                           type="button"
@@ -1270,9 +1438,9 @@ export default function App() {
               <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                   <div>
-                    <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Existing Sessions</p>
-                    <h2 className="mt-1 text-lg font-semibold text-gray-900">Resume, share, or clean up saved sessions</h2>
-                    <p className="mt-2 text-sm text-gray-600">Open an existing session or remove one you no longer need.</p>
+                    <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Active Sessions</p>
+                    <h2 className="mt-1 text-lg font-semibold text-gray-900">Keep live and unfinished sessions together</h2>
+                    <p className="mt-2 text-sm text-gray-600">Completed sessions move to History so this list stays focused on active work.</p>
                   </div>
                   <button
                     type="button"
@@ -1287,8 +1455,8 @@ export default function App() {
                   <p className="mt-3 text-sm text-gray-500">The backend may be waking up. Session refresh can take a little longer on cold start.</p>
                 ) : null}
                 <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
-                  {sessions.length > 0 ? (
-                    sessions.map((session) => (
+                  {activeSessions.length > 0 ? (
+                    activeSessions.map((session) => (
                       <SessionCard
                         key={session.sessionId}
                         session={session}
@@ -1303,13 +1471,36 @@ export default function App() {
                     ))
                   ) : (
                     <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
-                      No shared sessions yet. Generate and lock a roster to create your first one.
+                      No active sessions right now. Generate and lock a roster to create one, or head to History to browse completed sessions.
                     </div>
                   )}
                 </div>
               </section>
             )}
           </div>
+        ) : route.name === "history" ? (
+          <HistoryPage
+            sessions={completedSessions}
+            activeSessionCount={activeSessions.length}
+            sessionsLoading={sessionsLoading}
+            sessionsLoadingLabel={sessionsLoadingLabel}
+            sessionWaitText={sessionWaitText}
+            onRefresh={() => {
+              loadSessions();
+            }}
+            onOpenSession={openSession}
+          />
+        ) : route.name === "player-stats" ? (
+          <PlayerStatsPage
+            playerId={route.playerId || "overview"}
+            players={playerStats}
+            playerStatsLoading={playerStatsLoading}
+            playerDetail={playerStatsDetail}
+            playerStatsDetailLoading={playerStatsDetailLoading}
+            onOpenPlayerStats={openPlayerStats}
+            onOpenSession={openSession}
+            onBackToHistory={openHistoryHome}
+          />
         ) : currentSession ? (
           <ScoringPage
             key={currentSession.sessionId || "scoring-session"}
@@ -1332,6 +1523,14 @@ export default function App() {
             pendingRoundAction={pendingRoundAction}
             onRenameSession={() => openRenameDialog(currentSession.sessionId, currentSession.name)}
           />
+        ) : route.name === "session" ? (
+          <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <p className="text-sm font-semibold uppercase tracking-wide text-slate-500">Session</p>
+            <h2 className="mt-1 text-lg font-semibold text-slate-900">Loading session</h2>
+            <p className="mt-2 text-sm text-slate-600">
+              We&apos;re opening the shared session and keeping the live scoring experience isolated from the new history routes.
+            </p>
+          </section>
         ) : null}
         <RenameSessionDialog
           open={renameDialog.open}

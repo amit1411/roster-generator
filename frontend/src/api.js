@@ -130,3 +130,13 @@ export async function batchUpdateSharedScores(sessionId, payload, editToken) {
 
   return readJson(res);
 }
+
+export async function listPlayerStats() {
+  const res = await fetch(`${API_BASE}/api/stats/players`);
+  return readJson(res);
+}
+
+export async function fetchPlayerStats(playerName) {
+  const res = await fetch(`${API_BASE}/api/stats/players/${encodeURIComponent(playerName)}`);
+  return readJson(res);
+}
