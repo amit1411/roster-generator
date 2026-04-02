@@ -4,3 +4,5 @@ backend/venv/
 __pycache__/
 *.pyc
 .env
+frontend/test-results/
+frontend/playwright-report/

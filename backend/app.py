@@ -284,7 +284,10 @@ def _get_round_state(db, session_id: str, stage: str, total_rounds: int):
         .order_by(SessionRoundRecord.round_index.asc())
     ).all()
     round_map = {record.round_index: record for record in round_records}
-    ended_rounds = [bool(round_map.get(round_index) and round_map[round_index].ended) for round_index in range(total_rounds)]
+    round_count = total_rounds
+    if round_map:
+        round_count = max(round_count, max(round_map.keys()) + 1)
+    ended_rounds = [bool(round_map.get(round_index) and round_map[round_index].ended) for round_index in range(round_count)]
     active_round = max((record.round_index for record in round_records if record.started), default=-1)
     return active_round, ended_rounds
 
