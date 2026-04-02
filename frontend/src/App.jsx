@@ -434,6 +434,7 @@ export default function App() {
   const [roster, setRoster] = useState(plannerState?.roster || null);
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [sessionElapsed, setSessionElapsed] = useState(0);
   const [error, setError] = useState(null);
   const [generateError, setGenerateError] = useState(null);
   const [currentSession, setCurrentSession] = useState(normalizeSession(savedSession));
@@ -444,8 +445,11 @@ export default function App() {
   const [sessionAccess, setSessionAccess] = useState(savedSessionAccess);
   const [sessions, setSessions] = useState([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
+  const [sessionLoadingLabel, setSessionLoadingLabel] = useState("Syncing shared session...");
+  const [sessionsLoadingLabel, setSessionsLoadingLabel] = useState("Refreshing sessions...");
   const [shareFeedback, setShareFeedback] = useState({ sessionId: null, text: "" });
   const timerRef = useRef(null);
+  const sessionTimerRef = useRef(null);
   const reviewStepRef = useRef(null);
   const pendingScoreEditsRef = useRef({});
   const scoreMutationQueueRef = useRef(Promise.resolve());
@@ -460,6 +464,16 @@ export default function App() {
     }
     return () => clearInterval(timerRef.current);
   }, [loading]);
+
+  useEffect(() => {
+    if (sessionLoading || sessionsLoading) {
+      setSessionElapsed(0);
+      sessionTimerRef.current = setInterval(() => setSessionElapsed((s) => s + 1), 1000);
+    } else {
+      clearInterval(sessionTimerRef.current);
+    }
+    return () => clearInterval(sessionTimerRef.current);
+  }, [sessionLoading, sessionsLoading]);
 
   useEffect(() => {
     writeStorage(PLANNER_STORAGE_KEY, { players, fixedPairs, config, roster });
@@ -495,6 +509,7 @@ export default function App() {
     const urlSession = getSessionContextFromUrl();
     if (!urlSession?.sessionId) return;
 
+    setSessionLoadingLabel("Opening shared session...");
     setSessionLoading(true);
     fetchSharedSession(urlSession.sessionId, urlSession.editToken)
       .then((session) => {
@@ -572,12 +587,19 @@ export default function App() {
     return `Waking up server... (${elapsed}s)`;
   }
 
+  function sessionWaitText(label) {
+    if (sessionElapsed < 3) return label;
+    if (sessionElapsed < 8) return `${label} (${sessionElapsed}s)`;
+    return `Waking up server... (${sessionElapsed}s)`;
+  }
+
   function rememberSessionAccess(sessionId, editToken) {
     if (!sessionId || !editToken) return;
     setSessionAccess((current) => ({ ...current, [sessionId]: editToken }));
   }
 
   async function loadSessions() {
+    setSessionsLoadingLabel("Refreshing sessions...");
     setSessionsLoading(true);
     try {
       const list = await listSharedSessions();
@@ -592,6 +614,7 @@ export default function App() {
   async function handleLockRoster() {
     if (!roster) return;
 
+    setSessionLoadingLabel("Creating session...");
     setSessionLoading(true);
     setError(null);
     try {
@@ -621,6 +644,7 @@ export default function App() {
   }
 
   async function openSession(sessionId) {
+    setSessionLoadingLabel("Opening shared session...");
     setSessionLoading(true);
     setError(null);
     try {
@@ -679,6 +703,7 @@ export default function App() {
     );
     if (!shouldDelete) return;
 
+    setSessionLoadingLabel("Deleting session...");
     setSessionLoading(true);
     setError(null);
     try {
@@ -876,7 +901,10 @@ export default function App() {
 
         {sessionLoading && (
           <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
-            <p className="text-sm text-blue-700 font-medium">Syncing shared session...</p>
+            <p className="text-sm text-blue-700 font-medium">{sessionWaitText(sessionLoadingLabel)}</p>
+            {sessionElapsed >= 5 ? (
+              <p className="mt-2 text-sm text-blue-600">The backend may be waking up. This can take a little longer on cold start.</p>
+            ) : null}
           </div>
         )}
 
@@ -1070,9 +1098,12 @@ export default function App() {
                     disabled={sessionsLoading}
                     className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
                   >
-                    {sessionsLoading ? "Refreshing..." : "Refresh Sessions"}
+                    {sessionsLoading ? sessionWaitText(sessionsLoadingLabel) : "Refresh Sessions"}
                   </button>
                 </div>
+                {sessionsLoading && sessionElapsed >= 5 ? (
+                  <p className="mt-3 text-sm text-gray-500">The backend may be waking up. Session refresh can take a little longer on cold start.</p>
+                ) : null}
                 <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
                   {sessions.length > 0 ? (
                     sessions.map((session) => (
