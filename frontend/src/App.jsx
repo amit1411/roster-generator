@@ -422,6 +422,12 @@ function PlannerStepper({ currentStep }) {
   );
 }
 
+function waitForNextPaint() {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
 export default function App() {
   const plannerState = readStorage(PLANNER_STORAGE_KEY, null);
   const savedSession = readStorage(SESSION_STORAGE_KEY, null);
@@ -757,6 +763,7 @@ export default function App() {
     );
     setSessionLoading(true);
     try {
+      await waitForNextPaint();
       await flushRoundScoreEdits(sessionId, stage, roundIndex, editToken);
       const updated = await endSharedRound(sessionId, {
         stage,
@@ -780,6 +787,7 @@ export default function App() {
     setSessionLoadingLabel(`Reopening ${stage === "knockout" ? "playoff" : "league"} round...`);
     setSessionLoading(true);
     try {
+      await waitForNextPaint();
       await flushRoundScoreEdits(sessionId, stage, roundIndex, editToken);
       const updated = await editSharedRound(sessionId, {
         stage,
