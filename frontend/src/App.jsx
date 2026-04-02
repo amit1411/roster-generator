@@ -576,6 +576,7 @@ export default function App() {
   const pendingScoreEditsRef = useRef({});
   const scoreMutationQueueRef = useRef(Promise.resolve());
   const lastLocalEditAtRef = useRef(0);
+  const roundActionInFlightRef = useRef(null);
 
   useEffect(() => {
     if (loading) {
@@ -990,6 +991,9 @@ export default function App() {
 
   async function handleStartRound(stage, roundIndex) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
+    const actionKey = `start:${stage}:${roundIndex}`;
+    if (roundActionInFlightRef.current === actionKey) return;
+    roundActionInFlightRef.current = actionKey;
     const { sessionId, editToken } = currentSession;
 
     setPendingRoundAction({ stage, roundIndex, action: "start" });
@@ -1007,6 +1011,7 @@ export default function App() {
     } catch (e) {
       setError(e.message);
     } finally {
+      roundActionInFlightRef.current = null;
       setPendingRoundAction(null);
       setSessionLoading(false);
     }
@@ -1014,6 +1019,9 @@ export default function App() {
 
   async function handleEndRound(stage, roundIndex) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
+    const actionKey = `end:${stage}:${roundIndex}`;
+    if (roundActionInFlightRef.current === actionKey) return;
+    roundActionInFlightRef.current = actionKey;
     const { sessionId, editToken } = currentSession;
 
     setPendingRoundAction({ stage, roundIndex, action: "end" });
@@ -1033,6 +1041,7 @@ export default function App() {
     } catch (e) {
       setError(e.message);
     } finally {
+      roundActionInFlightRef.current = null;
       setPendingRoundAction(null);
       setSessionLoading(false);
     }
@@ -1040,6 +1049,9 @@ export default function App() {
 
   async function handleEditRound(stage, roundIndex) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
+    const actionKey = `edit:${stage}:${roundIndex}`;
+    if (roundActionInFlightRef.current === actionKey) return;
+    roundActionInFlightRef.current = actionKey;
     const { sessionId, editToken } = currentSession;
 
     setPendingRoundAction({ stage, roundIndex, action: "edit" });
@@ -1059,6 +1071,7 @@ export default function App() {
     } catch (e) {
       setError(e.message);
     } finally {
+      roundActionInFlightRef.current = null;
       setPendingRoundAction(null);
       setSessionLoading(false);
     }

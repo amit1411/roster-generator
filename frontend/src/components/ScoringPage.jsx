@@ -644,11 +644,23 @@ export default function ScoringPage({
     activeKnockoutRound + 1 < knockoutRounds.length ? knockoutRounds[activeKnockoutRound + 1].label : null;
   const nextRoundLabel = nextLeagueRound || nextKnockoutRound;
   const hasBracket = drawConfig?.draw_type === "league_knockout";
+  const finalRoundIndex = knockoutRounds.length - 1;
+  const finalRoundScores = finalRoundIndex >= 0 ? knockoutScoresByRound[finalRoundIndex] || [] : [];
+  const finalRoundEnded =
+    hasBracket &&
+    finalRoundIndex >= 0 &&
+    endedKnockoutRounds[finalRoundIndex] &&
+    finalRoundScores.length > 0 &&
+    finalRoundScores.every(isScoreComplete);
   const knockoutComplete =
     hasBracket &&
     leagueComplete &&
-    (knockoutRounds.length === 0 || areEndedRoundsComplete(knockoutRounds, knockoutScoresByRound, endedKnockoutRounds));
-  const sessionFinished = hasBracket ? knockoutComplete : leagueComplete;
+    (
+      knockoutRounds.length === 0 ||
+      areEndedRoundsComplete(knockoutRounds, knockoutScoresByRound, endedKnockoutRounds) ||
+      finalRoundEnded
+    );
+  const sessionFinished = hasBracket ? (knockoutComplete || finalRoundEnded) : leagueComplete;
   const finalRound = knockoutRounds.at(-1);
   const finalScore = finalRound ? knockoutScoresByRound[knockoutRounds.length - 1]?.[0] : null;
   const champion =
