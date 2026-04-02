@@ -566,6 +566,7 @@ def _delete_session_analytics(db, session_id: str):
 def _rebuild_player_stats_summary(db):
     for row in db.scalars(select(PlayerStatsSummaryRecord)).all():
         db.delete(row)
+    db.flush()
 
     session_rows = db.scalars(
         select(PlayerSessionStatsRecord).order_by(PlayerSessionStatsRecord.completed_at.desc())
