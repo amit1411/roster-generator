@@ -1,6 +1,6 @@
 import { expect } from "@playwright/test";
 
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = "http://127.0.0.1:8010";
 
 export async function generateRoster(request, overrides = {}) {
   const payload = {
@@ -48,6 +48,36 @@ export async function createRoundRobinSession(request, name = "Round Robin Smoke
   });
 }
 
+export async function completeRoundRobinSession(request, name = "Completed Round Robin") {
+  const session = await createRoundRobinSession(request, name);
+  const { session_id: sessionId, edit_token: editToken } = session;
+
+  await postRoundAction(request, sessionId, editToken, "start-round", {
+    stage: "league",
+    round_index: 0,
+  });
+  await postScore(request, sessionId, editToken, {
+    stage: "league",
+    round_index: 0,
+    court_index: 0,
+    team_key: "teamA",
+    value: 21,
+  });
+  await postScore(request, sessionId, editToken, {
+    stage: "league",
+    round_index: 0,
+    court_index: 0,
+    team_key: "teamB",
+    value: 14,
+  });
+  await postRoundAction(request, sessionId, editToken, "end-round", {
+    stage: "league",
+    round_index: 0,
+  });
+
+  return session;
+}
+
 export async function createKnockoutSession(request, name = "Knockout Smoke") {
   const roster = await generateRoster(request, {
     players: ["A", "B", "C", "D", "E", "F", "G", "H"],
@@ -77,7 +107,9 @@ export async function postScore(request, sessionId, editToken, payload) {
     `${API_BASE}/api/sessions/${sessionId}/score?edit_token=${encodeURIComponent(editToken)}`,
     { data: payload }
   );
-  expect(response.ok()).toBeTruthy();
+  if (!response.ok()) {
+    throw new Error(`POST /score failed (${response.status()}): ${await response.text()}`);
+  }
   return response.json();
 }
 
@@ -86,7 +118,9 @@ export async function postRoundAction(request, sessionId, editToken, path, paylo
     `${API_BASE}/api/sessions/${sessionId}/${path}?edit_token=${encodeURIComponent(editToken)}`,
     { data: payload }
   );
-  expect(response.ok()).toBeTruthy();
+  if (!response.ok()) {
+    throw new Error(`POST /${path} failed (${response.status()}): ${await response.text()}`);
+  }
   return response.json();
 }
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 
-from sqlalchemy import JSON, DateTime, Integer, String, create_engine, func
+from sqlalchemy import JSON, DateTime, Integer, String, create_engine, func, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
@@ -79,13 +79,201 @@ class SessionScoreRecord(Base):
     team_b_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
+class CompletedSessionStatsRecord(Base):
+    """Persisted summary for completed sessions."""
+
+    __tablename__ = "completed_session_stats"
+
+    session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    session_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    draw_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    total_players: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_matches: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    champion_pair: Mapped[str | None] = mapped_column(String(240), nullable=True)
+    top_player: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    processed_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    completed_at: Mapped[str] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PlayerSessionStatsRecord(Base):
+    """Per-player stats for a completed session."""
+
+    __tablename__ = "player_session_stats"
+
+    session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    session_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    draw_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    completed_at: Mapped[str] = mapped_column(DateTime(timezone=True), nullable=False)
+    matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    point_difference: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_point_difference: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_point_difference: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    championships: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class PlayerPartnerSessionStatsRecord(Base):
+    """Per-player/per-partner stats for a completed session."""
+
+    __tablename__ = "player_partner_session_stats"
+
+    session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    partner_name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    point_difference: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+
+class PlayerStatsSummaryRecord(Base):
+    """Aggregate stats across completed sessions."""
+
+    __tablename__ = "player_stats_summary"
+
+    player_name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    sessions_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    point_difference: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    league_point_difference: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_losses: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_draws: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    knockout_point_difference: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    championships: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    best_partner: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    best_partner_wins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    best_partner_matches: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_session_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 engine = create_engine(DATABASE_URL, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+ANALYTICS_SCHEMA_UPDATES = {
+    "completed_session_stats": [
+        ("session_name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
+        ("draw_type", "VARCHAR(32)", "NOT NULL DEFAULT 'round_robin'"),
+        ("total_players", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("total_matches", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("champion_pair", "VARCHAR(240)", "NULL"),
+        ("top_player", "VARCHAR(120)", "NULL"),
+        ("processed_version", "INTEGER", "NOT NULL DEFAULT 1"),
+        ("completed_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
+    "player_session_stats": [
+        ("session_name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
+        ("draw_type", "VARCHAR(32)", "NOT NULL DEFAULT 'round_robin'"),
+        ("completed_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+        ("matches_played", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("wins", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("losses", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("draws", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("points", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("point_difference", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_matches_played", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_wins", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_losses", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_draws", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_points", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_point_difference", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_matches_played", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_wins", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_losses", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_draws", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_points", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_point_difference", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("championships", "INTEGER", "NOT NULL DEFAULT 0"),
+    ],
+    "player_partner_session_stats": [
+        ("matches_played", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("wins", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("losses", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("draws", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("points", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("point_difference", "INTEGER", "NOT NULL DEFAULT 0"),
+    ],
+    "player_stats_summary": [
+        ("sessions_played", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("matches_played", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("wins", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("losses", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("draws", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("points", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("point_difference", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_matches_played", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_wins", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_losses", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_draws", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_points", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("league_point_difference", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_matches_played", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_wins", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_losses", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_draws", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_points", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("knockout_point_difference", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("championships", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("best_partner", "VARCHAR(120)", "NULL"),
+        ("best_partner_wins", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("best_partner_matches", "INTEGER", "NOT NULL DEFAULT 0"),
+        ("last_session_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
+}
+
+
+def _ensure_table_columns():
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    with engine.begin() as connection:
+        for table_name, columns in ANALYTICS_SCHEMA_UPDATES.items():
+            if table_name not in existing_tables:
+                continue
+
+            existing_columns = {column["name"] for column in inspector.get_columns(table_name)}
+            for column_name, column_type, column_clause in columns:
+                if column_name in existing_columns:
+                    continue
+                connection.execute(
+                    text(
+                        f"ALTER TABLE {table_name} "
+                        f"ADD COLUMN {column_name} {column_type} {column_clause}"
+                    )
+                )
 
 
 def init_db():
     """Create tables if they do not exist."""
     Base.metadata.create_all(bind=engine)
+    _ensure_table_columns()
 
 
 @contextmanager

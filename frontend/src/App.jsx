@@ -4,6 +4,9 @@ import ConfigPanel from "./components/ConfigPanel";
 import RosterTable from "./components/RosterTable";
 import DownloadCSV from "./components/DownloadCSV";
 import ScoringPage from "./components/ScoringPage";
+import ActiveSessionsPage from "./components/ActiveSessionsPage";
+import HistoryPage from "./components/HistoryPage";
+import PlayerStatsPage from "./components/PlayerStatsPage";
 import {
   batchUpdateSharedScores,
   createSharedSession,
@@ -11,7 +14,10 @@ import {
   editSharedRound,
   endSharedRound,
   fetchSharedSession,
+  fetchPlayerStats,
   generateRoster,
+  listCompletedSessions,
+  listPlayerStats,
   renameSharedSession,
   listSharedSessions,
   startSharedRound,
@@ -501,6 +507,67 @@ function waitForNextPaint() {
   });
 }
 
+function normalizeCompletedSessionSummary(session) {
+  if (!session?.session_id) return null;
+
+  return {
+    sessionId: session.session_id,
+    sessionName: session.session_name,
+    drawType: session.draw_type,
+    completedAt: session.completed_at,
+    totalPlayers: session.total_players,
+    totalMatches: session.total_matches,
+    championPair: session.champion_pair || null,
+    topPlayer: session.top_player || null,
+  };
+}
+
+function normalizePlayerSummary(player) {
+  if (!player?.player_name) return null;
+
+  return {
+    playerName: player.player_name,
+    sessionsPlayed: player.sessions_played,
+    matchesPlayed: player.matches_played,
+    wins: player.wins,
+    losses: player.losses,
+    draws: player.draws,
+    points: player.points,
+    pointDifference: player.point_difference,
+    leagueMatchesPlayed: player.league_matches_played,
+    leagueWins: player.league_wins,
+    leagueLosses: player.league_losses,
+    leagueDraws: player.league_draws,
+    leaguePoints: player.league_points,
+    leaguePointDifference: player.league_point_difference,
+    knockoutMatchesPlayed: player.knockout_matches_played,
+    knockoutWins: player.knockout_wins,
+    knockoutLosses: player.knockout_losses,
+    knockoutDraws: player.knockout_draws,
+    knockoutPoints: player.knockout_points,
+    knockoutPointDifference: player.knockout_point_difference,
+    championships: player.championships,
+    winRate: player.win_rate,
+    lastSessionAt: player.last_session_at || null,
+  };
+}
+
+function normalizePlayerDetail(detail) {
+  if (!detail?.player_name) return null;
+
+  return {
+    ...normalizePlayerSummary(detail),
+    topPartners: Array.isArray(detail.top_partners)
+      ? detail.top_partners.map((partner) => ({
+          partnerName: partner.partner_name,
+          matchesPlayed: partner.matches_played,
+          wins: partner.wins,
+          winRate: partner.win_rate,
+        }))
+      : [],
+  };
+}
+
 export default function App() {
   const plannerState = readStorage(PLANNER_STORAGE_KEY, null);
   const savedSession = readStorage(SESSION_STORAGE_KEY, null);
@@ -524,6 +591,13 @@ export default function App() {
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionAccess, setSessionAccess] = useState(savedSessionAccess);
   const [sessions, setSessions] = useState([]);
+  const [historySessions, setHistorySessions] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [playerStats, setPlayerStats] = useState([]);
+  const [playerStatsLoading, setPlayerStatsLoading] = useState(false);
+  const [selectedPlayer, setSelectedPlayer] = useState(null);
+  const [playerStatsDetail, setPlayerStatsDetail] = useState(null);
+  const [playerStatsDetailLoading, setPlayerStatsDetailLoading] = useState(false);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionLoadingLabel, setSessionLoadingLabel] = useState("Syncing shared session...");
   const [sessionsLoadingLabel, setSessionsLoadingLabel] = useState("Refreshing sessions...");
@@ -538,6 +612,7 @@ export default function App() {
   const pendingScoreEditsRef = useRef({});
   const scoreMutationQueueRef = useRef(Promise.resolve());
   const lastLocalEditAtRef = useRef(0);
+  const previousNonScoringViewRef = useRef(initialView === "scoring" ? "sessions" : initialView);
 
   useEffect(() => {
     if (loading) {
@@ -584,8 +659,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (view === "planner") {
+    if (view === "sessions") {
       loadSessions();
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (view === "history") {
+      loadHistorySessions();
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (view === "player-stats") {
+      loadPlayerStats();
     }
   }, [view]);
 
@@ -600,6 +687,7 @@ export default function App() {
         const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
         rememberSessionAccess(normalized.sessionId, normalized.editToken);
         setCurrentSession(normalized);
+        previousNonScoringViewRef.current = initialView === "scoring" ? "sessions" : initialView;
         setView("scoring");
         setError(null);
       })
@@ -635,9 +723,30 @@ export default function App() {
 
   useEffect(() => {
     if (view === "scoring" && !currentSession && !sessionLoading) {
-      setView("planner");
+      setView("sessions");
     }
   }, [view, currentSession, sessionLoading]);
+
+  useEffect(() => {
+    if (playerStats.length === 0) {
+      if (selectedPlayer) {
+        setSelectedPlayer(null);
+      }
+      if (playerStatsDetail) {
+        setPlayerStatsDetail(null);
+      }
+      return;
+    }
+
+    if (!selectedPlayer || !playerStats.some((player) => player.playerName === selectedPlayer)) {
+      setSelectedPlayer(playerStats[0].playerName);
+    }
+  }, [playerStats, selectedPlayer, playerStatsDetail]);
+
+  useEffect(() => {
+    if (view !== "player-stats" || !selectedPlayer) return;
+    loadPlayerStatsDetail(selectedPlayer);
+  }, [view, selectedPlayer]);
 
   function enqueueScoreMutation(task) {
     const nextOperation = scoreMutationQueueRef.current.then(task, task);
@@ -696,6 +805,52 @@ export default function App() {
     }
   }
 
+  async function loadHistorySessions() {
+    setHistoryLoading(true);
+    try {
+      const list = await listCompletedSessions();
+      setHistorySessions(list.map(normalizeCompletedSessionSummary).filter(Boolean));
+    } catch (e) {
+      setError((currentError) => currentError || e.message);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function loadPlayerStats() {
+    setPlayerStatsLoading(true);
+    try {
+      const list = await listPlayerStats();
+      setPlayerStats(list.map(normalizePlayerSummary).filter(Boolean));
+    } catch (e) {
+      setError((currentError) => currentError || e.message);
+    } finally {
+      setPlayerStatsLoading(false);
+    }
+  }
+
+  async function loadPlayerStatsDetail(playerName) {
+    setPlayerStatsDetailLoading(true);
+    try {
+      const detail = await fetchPlayerStats(playerName);
+      setPlayerStatsDetail(normalizePlayerDetail(detail));
+    } catch (e) {
+      setError((currentError) => currentError || e.message);
+    } finally {
+      setPlayerStatsDetailLoading(false);
+    }
+  }
+
+  function refreshSupportingViews({ includeHistory = false, includePlayerStats = false } = {}) {
+    void loadSessions();
+    if (includeHistory) {
+      void loadHistorySessions();
+    }
+    if (includePlayerStats) {
+      void loadPlayerStats();
+    }
+  }
+
   async function handleLockRoster() {
     if (!roster) return;
 
@@ -720,8 +875,9 @@ export default function App() {
       setPlannerStep(1);
       setSessionDraftName(createSessionName());
       setSessionIdInUrl(normalized.sessionId, normalized.editToken);
+      previousNonScoringViewRef.current = "sessions";
       setView("scoring");
-      await loadSessions();
+      refreshSupportingViews();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -742,8 +898,9 @@ export default function App() {
       rememberSessionAccess(latest.sessionId, latest.editToken);
       setCurrentSession(latest);
       setSessionIdInUrl(latest.sessionId, latest.editToken);
+      previousNonScoringViewRef.current = view === "scoring" ? previousNonScoringViewRef.current : view;
       setView("scoring");
-      await loadSessions();
+      refreshSupportingViews();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -754,17 +911,7 @@ export default function App() {
   function handleBackToPlanner() {
     setPlannerMode("generate");
     setPlannerStep(roster ? 3 : 1);
-    setView("planner");
-  }
-
-  function showGenerateMode() {
-    setGenerateError(null);
-    setPlannerMode("generate");
-  }
-
-  function showSessionsMode() {
-    setGenerateError(null);
-    setPlannerMode("sessions");
+    setView(previousNonScoringViewRef.current || "sessions");
   }
 
   function openRenameDialog(sessionId, currentName) {
@@ -803,7 +950,7 @@ export default function App() {
       }
       setRenameDialog({ open: false, sessionId: null });
       setRenameValue("");
-      await loadSessions();
+      refreshSupportingViews({ includeHistory: true, includePlayerStats: true });
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -849,8 +996,9 @@ export default function App() {
       if (currentSession?.sessionId === sessionId) {
         setCurrentSession(null);
         setSessionIdInUrl(null);
-        setView("planner");
+        setView("sessions");
       }
+      refreshSupportingViews({ includeHistory: true, includePlayerStats: true });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -873,6 +1021,7 @@ export default function App() {
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
+      refreshSupportingViews({ includeHistory: true, includePlayerStats: true });
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -899,6 +1048,7 @@ export default function App() {
       const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
+      refreshSupportingViews({ includeHistory: true, includePlayerStats: true });
       setError(null);
     } catch (e) {
       setError(e.message);
@@ -1033,6 +1183,13 @@ export default function App() {
 
   const canContinueFromPlayers = players.length >= 4;
   const canContinueFromSettings = config.num_courts >= 1;
+  const activeSessions = sessions.filter((session) => session.status !== "completed");
+  const navItems = [
+    { key: "planner", label: "Planner" },
+    { key: "sessions", label: "Active Sessions" },
+    { key: "history", label: "History" },
+    { key: "player-stats", label: "Player Stats" },
+  ];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1041,6 +1198,28 @@ export default function App() {
           <div>
             <h1 className="text-xl font-bold text-gray-900">Badminton</h1>
           </div>
+          <nav className="flex flex-wrap gap-2">
+            {navItems.map((item) => {
+              const isActive = view === item.key;
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  onClick={() => {
+                    previousNonScoringViewRef.current = item.key;
+                    setView(item.key);
+                  }}
+                  className={`inline-flex min-h-10 items-center justify-center rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                    isActive
+                      ? "bg-indigo-600 text-white"
+                      : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              );
+            })}
+          </nav>
         </div>
       </header>
 
@@ -1079,237 +1258,245 @@ export default function App() {
               <div className="flex flex-col gap-5">
                 <div>
                   <p className="text-sm font-medium text-indigo-100">Planner</p>
-                  <h2 className="mt-1 text-2xl font-bold">Choose what you want to do next</h2>
+                  <h2 className="mt-1 text-2xl font-bold">Build the next session from scratch</h2>
                   <p className="mt-2 max-w-3xl text-sm text-indigo-50">
-                    Create a new roster in steps, or jump straight into an existing session.
+                    Keep this page focused on setup: add players, configure the format, generate the roster, and start a new session.
                   </p>
-                </div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <PlannerModeCard
-                    title="Generate Roster"
-                    description="Add players, configure settings, review the roster, and start a session."
-                    active={plannerMode === "generate"}
-                    onClick={showGenerateMode}
-                  />
-                  <PlannerModeCard
-                    title="Existing Sessions"
-                    description="Open, share, or remove saved sessions."
-                    active={plannerMode === "sessions"}
-                    onClick={showSessionsMode}
-                  />
                 </div>
               </div>
             </section>
 
-            {plannerMode === "generate" ? (
-              <div className="space-y-6">
-                <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                  <PlannerStepper currentStep={plannerStep} />
-                </section>
-
-                {plannerStep === 1 ? (
-                  <PlannerStepCard
-                    step="Step 1"
-                    title="Players and pairs"
-                    description="Add players and create any fixed pairs before moving on."
-                  >
-                    <div className="space-y-6">
-                      <PlayerInput
-                        players={players}
-                        setPlayers={setPlayers}
-                        fixedPairs={fixedPairs}
-                        setFixedPairs={setFixedPairs}
-                      />
-                      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-                        <button
-                          type="button"
-                          onClick={() => setPlannerMode("sessions")}
-                          className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
-                        >
-                          View Existing Sessions
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPlannerStep(2)}
-                          disabled={!canContinueFromPlayers}
-                          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
-                        >
-                          Next: Settings
-                        </button>
-                      </div>
-                    </div>
-                  </PlannerStepCard>
-                ) : null}
-
-                {plannerStep === 2 ? (
-                  <PlannerStepCard
-                    step="Step 2"
-                    title="Settings"
-                    description="Choose the format and scheduling settings for this roster."
-                  >
-                    <div className="space-y-6">
-                      <ConfigPanel
-                        config={config}
-                        setConfig={setConfig}
-                        players={players}
-                        fixedPairs={fixedPairs}
-                      />
-                      <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
-                        <button
-                          type="button"
-                          onClick={() => setPlannerStep(1)}
-                          className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
-                        >
-                          Back
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPlannerStep(3)}
-                          disabled={!canContinueFromSettings}
-                          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
-                        >
-                          Next: Review
-                        </button>
-                      </div>
-                    </div>
-                  </PlannerStepCard>
-                ) : null}
-
-                {plannerStep === 3 ? (
-                  <div ref={reviewStepRef} className="space-y-4">
-                    <PlannerStepCard
-                      step="Step 3"
-                      title="Review and start"
-                      description="Generate the roster, review the rounds, then start the session."
-                      tone={roster ? "slate" : "default"}
-                    >
-                      {loading ? (
-                        <div className="py-8 text-center">
-                          <svg className="mx-auto mb-4 h-12 w-12 animate-spin text-indigo-500" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                          </svg>
-                          <p className={`${roster ? "text-slate-200" : "text-gray-700"} font-medium`}>{loadingText()}</p>
-                          {elapsed >= 5 ? (
-                            <p className={`mt-2 text-sm ${roster ? "text-slate-400" : "text-gray-400"}`}>
-                              First request may take up to 30s while the server wakes up
-                            </p>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <div className="space-y-4">
-                          {generateError ? (
-                            <div className={`rounded-xl border px-4 py-3 text-sm ${
-                              roster ? "border-rose-300 bg-rose-50 text-rose-700" : "border-rose-200 bg-rose-50 text-rose-700"
-                            }`}>
-                              <p className="font-semibold">Roster could not be generated</p>
-                              <p className="mt-1">{generateError}</p>
-                            </div>
-                          ) : null}
-                          <p className={`text-sm ${roster ? "text-slate-300" : "text-gray-600"}`}>
-                            {roster ? "The latest generated roster is ready to review below." : "Generate a roster to preview the rounds and courts here."}
-                          </p>
-                          {roster ? (
-                            <label className={`block text-sm font-medium ${roster ? "text-slate-100" : "text-gray-700"}`} htmlFor="session-draft-name">
-                              Session name
-                              <input
-                                id="session-draft-name"
-                                type="text"
-                                value={sessionDraftName}
-                                onChange={(event) => setSessionDraftName(event.target.value)}
-                                maxLength={120}
-                                className={`mt-2 block w-full rounded-lg border px-3 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
-                                  roster
-                                    ? "border-slate-500/50 bg-slate-950/40 text-white placeholder:text-slate-400"
-                                    : "border-gray-300 bg-white text-gray-900"
-                                }`}
-                              />
-                            </label>
-                          ) : null}
-                          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-                            <button
-                              type="button"
-                              onClick={handleGenerate}
-                              disabled={loading || players.length < 4}
-                              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
-                            >
-                              {roster ? "Regenerate Roster" : "Generate Roster"}
-                            </button>
-                            {roster ? <DownloadCSV data={roster} /> : null}
-                            <button
-                              type="button"
-                              onClick={handleLockRoster}
-                              disabled={!roster || sessionLoading}
-                              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
-                            >
-                              {sessionLoading ? "Creating Session..." : "Start Session"}
-                            </button>
-                          </div>
-                          <div className="flex">
-                            <button
-                              type="button"
-                              onClick={() => setPlannerStep(2)}
-                              className={`inline-flex min-h-11 items-center justify-center rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors ${
-                                roster
-                                  ? "border-slate-500/40 bg-transparent text-white hover:bg-white/10"
-                                  : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
-                              }`}
-                            >
-                              Back
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </PlannerStepCard>
-
-                    {roster ? <RosterTable data={roster} fixedPairs={fixedPairs} /> : null}
-                  </div>
-                ) : null}
-              </div>
-            ) : (
+            <div className="space-y-6">
               <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Existing Sessions</p>
-                    <h2 className="mt-1 text-lg font-semibold text-gray-900">Resume, share, or clean up saved sessions</h2>
-                    <p className="mt-2 text-sm text-gray-600">Open an existing session or remove one you no longer need.</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={loadSessions}
-                    disabled={sessionsLoading}
-                    className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
-                  >
-                    {sessionsLoading ? sessionWaitText(sessionsLoadingLabel) : "Refresh Sessions"}
-                  </button>
-                </div>
-                {sessionsLoading && sessionElapsed >= 5 && !PLAIN_SESSION_WAIT_LABELS.has(sessionsLoadingLabel) ? (
-                  <p className="mt-3 text-sm text-gray-500">The backend may be waking up. Session refresh can take a little longer on cold start.</p>
-                ) : null}
-                <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
-                  {sessions.length > 0 ? (
-                    sessions.map((session) => (
-                      <SessionCard
-                        key={session.sessionId}
-                        session={session}
-                        isCurrent={session.sessionId === currentSession?.sessionId}
-                        canScore={Boolean(sessionAccess[session.sessionId])}
-                        feedback={shareFeedback.sessionId === session.sessionId ? shareFeedback : null}
-                        onOpen={openSession}
-                        onCopy={handleCopyShareLink}
-                        onDelete={handleDeleteSession}
-                        onRename={openRenameDialog}
-                      />
-                    ))
-                  ) : (
-                    <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
-                      No shared sessions yet. Generate and lock a roster to create your first one.
-                    </div>
-                  )}
-                </div>
+                <PlannerStepper currentStep={plannerStep} />
               </section>
-            )}
+
+              {plannerStep === 1 ? (
+                <PlannerStepCard
+                  step="Step 1"
+                  title="Players and pairs"
+                  description="Add players and create any fixed pairs before moving on."
+                >
+                  <div className="space-y-6">
+                    <PlayerInput
+                      players={players}
+                      setPlayers={setPlayers}
+                      fixedPairs={fixedPairs}
+                      setFixedPairs={setFixedPairs}
+                    />
+                    <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                      <button
+                        type="button"
+                        onClick={() => setView("sessions")}
+                        className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                      >
+                        Go to Active Sessions
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPlannerStep(2)}
+                        disabled={!canContinueFromPlayers}
+                        className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                      >
+                        Next: Settings
+                      </button>
+                    </div>
+                  </div>
+                </PlannerStepCard>
+              ) : null}
+
+              {plannerStep === 2 ? (
+                <PlannerStepCard
+                  step="Step 2"
+                  title="Settings"
+                  description="Choose the format and scheduling settings for this roster."
+                >
+                  <div className="space-y-6">
+                    <ConfigPanel
+                      config={config}
+                      setConfig={setConfig}
+                      players={players}
+                      fixedPairs={fixedPairs}
+                    />
+                    <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setPlannerStep(1)}
+                        className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPlannerStep(3)}
+                        disabled={!canContinueFromSettings}
+                        className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                      >
+                        Next: Review
+                      </button>
+                    </div>
+                  </div>
+                </PlannerStepCard>
+              ) : null}
+
+              {plannerStep === 3 ? (
+                <div ref={reviewStepRef} className="space-y-4">
+                  <PlannerStepCard
+                    step="Step 3"
+                    title="Review and start"
+                    description="Generate the roster, review the rounds, then start the session."
+                    tone={roster ? "slate" : "default"}
+                  >
+                    {loading ? (
+                      <div className="py-8 text-center">
+                        <svg className="mx-auto mb-4 h-12 w-12 animate-spin text-indigo-500" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        <p className={`${roster ? "text-slate-200" : "text-gray-700"} font-medium`}>{loadingText()}</p>
+                        {elapsed >= 5 ? (
+                          <p className={`mt-2 text-sm ${roster ? "text-slate-400" : "text-gray-400"}`}>
+                            First request may take up to 30s while the server wakes up
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        {generateError ? (
+                          <div className={`rounded-xl border px-4 py-3 text-sm ${
+                            roster ? "border-rose-300 bg-rose-50 text-rose-700" : "border-rose-200 bg-rose-50 text-rose-700"
+                          }`}>
+                            <p className="font-semibold">Roster could not be generated</p>
+                            <p className="mt-1">{generateError}</p>
+                          </div>
+                        ) : null}
+                        <p className={`text-sm ${roster ? "text-slate-300" : "text-gray-600"}`}>
+                          {roster ? "The latest generated roster is ready to review below." : "Generate a roster to preview the rounds and courts here."}
+                        </p>
+                        {roster ? (
+                          <label className={`block text-sm font-medium ${roster ? "text-slate-100" : "text-gray-700"}`} htmlFor="session-draft-name">
+                            Session name
+                            <input
+                              id="session-draft-name"
+                              type="text"
+                              value={sessionDraftName}
+                              onChange={(event) => setSessionDraftName(event.target.value)}
+                              maxLength={120}
+                              className={`mt-2 block w-full rounded-lg border px-3 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                                roster
+                                  ? "border-slate-500/50 bg-slate-950/40 text-white placeholder:text-slate-400"
+                                  : "border-gray-300 bg-white text-gray-900"
+                              }`}
+                            />
+                          </label>
+                        ) : null}
+                        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                          <button
+                            type="button"
+                            onClick={handleGenerate}
+                            disabled={loading || players.length < 4}
+                            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                          >
+                            {roster ? "Regenerate Roster" : "Generate Roster"}
+                          </button>
+                          {roster ? <DownloadCSV data={roster} /> : null}
+                          <button
+                            type="button"
+                            onClick={handleLockRoster}
+                            disabled={!roster || sessionLoading}
+                            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+                          >
+                            {sessionLoading ? "Creating Session..." : "Start Session"}
+                          </button>
+                        </div>
+                        <div className="flex">
+                          <button
+                            type="button"
+                            onClick={() => setPlannerStep(2)}
+                            className={`inline-flex min-h-11 items-center justify-center rounded-lg border px-4 py-2.5 text-sm font-semibold transition-colors ${
+                              roster
+                                ? "border-slate-500/40 bg-transparent text-white hover:bg-white/10"
+                                : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
+                            }`}
+                          >
+                            Back
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </PlannerStepCard>
+
+                  {roster ? <RosterTable data={roster} fixedPairs={fixedPairs} /> : null}
+                </div>
+              ) : null}
+            </div>
           </div>
+        ) : view === "sessions" ? (
+          <ActiveSessionsPage
+            sessions={activeSessions}
+            currentSessionId={currentSession?.sessionId || null}
+            sessionAccess={sessionAccess}
+            shareFeedback={shareFeedback}
+            sessionsLoading={sessionsLoading}
+            sessionsLoadingLabel={sessionsLoadingLabel}
+            sessionWaitText={sessionWaitText}
+            onRefresh={loadSessions}
+            onOpen={openSession}
+            onCopy={handleCopyShareLink}
+            onDelete={handleDeleteSession}
+            onRename={openRenameDialog}
+          />
+        ) : view === "history" ? (
+          <HistoryPage
+            sessions={historySessions.map((session) => ({
+              session_id: session.sessionId,
+              session_name: session.sessionName,
+              draw_type: session.drawType,
+              completed_at: session.completedAt,
+              total_players: session.totalPlayers,
+              total_matches: session.totalMatches,
+              champion_pair: session.championPair,
+              top_player: session.topPlayer,
+            }))}
+            sessionsLoading={historyLoading}
+            onRefresh={loadHistorySessions}
+            onOpen={openSession}
+            onDelete={handleDeleteSession}
+            sessionAccess={sessionAccess}
+          />
+        ) : view === "player-stats" ? (
+          <PlayerStatsPage
+            players={playerStats.map((player) => ({
+              player_name: player.playerName,
+              sessions_played: player.sessionsPlayed,
+              matches_played: player.matchesPlayed,
+              win_rate: player.winRate,
+              championships: player.championships,
+            }))}
+            selectedPlayer={selectedPlayer}
+            playerDetail={
+              playerStatsDetail
+                ? {
+                    player_name: playerStatsDetail.playerName,
+                    sessions_played: playerStatsDetail.sessionsPlayed,
+                    matches_played: playerStatsDetail.matchesPlayed,
+                    win_rate: playerStatsDetail.winRate,
+                    championships: playerStatsDetail.championships,
+                    last_session_at: playerStatsDetail.lastSessionAt,
+                    top_partners: playerStatsDetail.topPartners.map((partner) => ({
+                      partner_name: partner.partnerName,
+                      matches_played: partner.matchesPlayed,
+                      wins: partner.wins,
+                      win_rate: partner.winRate,
+                    })),
+                  }
+                : null
+            }
+            loading={playerStatsLoading}
+            detailLoading={playerStatsDetailLoading}
+            onSelectPlayer={setSelectedPlayer}
+            onRefresh={loadPlayerStats}
+          />
         ) : currentSession ? (
           <ScoringPage
             key={currentSession.sessionId || "scoring-session"}

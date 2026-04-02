@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createRoundRobinSession, openSession } from "./helpers/session";
 
-test("@smoke round robin scorer can start and end a round", async ({ page, request }) => {
+test("@smoke ending the last league round should complete the session and show results", async ({ page, request }) => {
   const session = await createRoundRobinSession(request, "Round Robin Round Smoke");
   const { session_id: sessionId, edit_token: editToken } = session;
 

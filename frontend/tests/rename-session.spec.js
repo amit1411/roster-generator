@@ -20,7 +20,7 @@ test("@smoke session can be renamed from scoring view and session list", async (
   await expect(page.getByText("Session Evening Ladder")).toBeVisible();
 
   await page.getByRole("button", { name: "Back to Roster" }).click();
-  await page.getByRole("button", { name: "View Existing Sessions" }).click();
+  await page.getByRole("button", { name: "Active Sessions" }).click();
   await expect(page.getByRole("heading", { name: "Evening Ladder" }).first()).toBeVisible();
 
   await page.getByRole("button", { name: "Rename" }).first().click();

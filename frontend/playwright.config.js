@@ -5,22 +5,22 @@ export default defineConfig({
   timeout: 60_000,
   workers: 1,
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: "http://127.0.0.1:4174",
     trace: "on-first-retry",
   },
   webServer: [
     {
       command:
-        "rm -f /tmp/badminton-roster-rename-e2e.db && DATABASE_URL=sqlite:////tmp/badminton-roster-rename-e2e.db ../backend/venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8000",
+        "rm -f /tmp/badminton-roster-rename-e2e.db && DATABASE_URL=sqlite:////tmp/badminton-roster-rename-e2e.db ../backend/venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8010",
       cwd: "../backend",
-      url: "http://127.0.0.1:8000/docs",
-      reuseExistingServer: true,
+      url: "http://127.0.0.1:8010/docs",
+      reuseExistingServer: false,
     },
     {
-      command: "npm run dev -- --host 127.0.0.1 --port 4173",
+      command: "VITE_API_URL=http://127.0.0.1:8010 npm run dev -- --host 127.0.0.1 --port 4174",
       cwd: ".",
-      url: "http://127.0.0.1:4173",
-      reuseExistingServer: true,
+      url: "http://127.0.0.1:4174",
+      reuseExistingServer: false,
     },
   ],
 });

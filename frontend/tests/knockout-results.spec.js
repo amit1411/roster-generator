@@ -5,7 +5,7 @@ import {
   postRoundAction,
   postScore,
 } from "./helpers/session";
-test("@smoke ending the final knockout round should show session results", async ({ page, request }) => {
+test("@smoke ending the final knockout round should complete the session and show results", async ({ page, request }) => {
   const session = await createKnockoutSession(request, "Knockout Finish Repro");
   const { session_id: sessionId, edit_token: editToken } = session;
 

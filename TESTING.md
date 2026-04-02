@@ -59,13 +59,21 @@ npm run test:e2e -- rename-session.spec.js
   - create a minimal round robin session
   - start the round
   - enter scores
-  - end the round
-  - verify the session lands on results
+  - end the last league round
+  - verify the whole session completes and lands on results
 - [knockout-results.spec.js](/Users/amit.agarwal/Documents/WBD_Repos/badminton-roster/frontend/tests/knockout-results.spec.js)
   - create a knockout session
   - complete league play and semifinals via API
   - start and end the final in the UI
-  - verify the session lands on results
+  - verify the whole session completes and lands on results
+- [history-page.spec.js](/Users/amit.agarwal/Documents/WBD_Repos/badminton-roster/frontend/tests/history-page.spec.js)
+  - create one completed session and one active session
+  - verify History shows only completed sessions
+  - verify Active Sessions excludes completed ones
+- [player-stats.spec.js](/Users/amit.agarwal/Documents/WBD_Repos/badminton-roster/frontend/tests/player-stats.spec.js)
+  - create a completed session
+  - verify Player Stats loads leaderboard/profile data from analytics tables
+  - verify recent completed session history is shown
 - [view-only-session.spec.js](/Users/amit.agarwal/Documents/WBD_Repos/badminton-roster/frontend/tests/view-only-session.spec.js)
   - open a shared session without an edit token
   - verify the session is view-only
@@ -107,6 +115,10 @@ npm run test:e2e:full
 
 - Playwright runs against a temporary SQLite database for isolation.
 - This is useful for smoke coverage and avoids depending on local Postgres.
+- Playwright uses dedicated local test ports:
+  - backend: `127.0.0.1:8010`
+  - frontend: `127.0.0.1:4174`
+  - This avoids accidentally reusing a local dev server on the default app ports.
 - Playwright is configured with `workers: 1`.
   - The current E2E setup shares one temporary SQLite-backed backend instance.
   - Running tests in parallel can cause cross-test interference and flaky failures.
@@ -121,4 +133,5 @@ npm run test:e2e:full
 - rename session while already open in scoring and verify header update
 - existing sessions list can reopen a live session
 - refresh/deep-link session open works
-- completed sessions/history flow if that feature stays on this branch
+- deleting a completed session from History and verifying analytics disappear
+- opening a player-linked historical result from Player Stats
