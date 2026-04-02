@@ -158,6 +158,20 @@ class RoundEditRequest(BaseModel):
     round_index: int
 
 
+class SessionRenameRequest(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str):
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("Session name is required")
+        if len(cleaned) > 120:
+            raise ValueError("Session name must be 120 characters or fewer")
+        return cleaned
+
+
 class ScoreMutationResponse(BaseModel):
     ok: bool = True
     version: int
@@ -692,6 +706,21 @@ def delete_shared_session(session_id: str, edit_token: str | None = None):
             db.delete(score_record)
         db.delete(record)
     return Response(status_code=204)
+
+
+@app.post("/api/sessions/{session_id}/rename", response_model=SharedSessionResponse)
+def rename_shared_session(session_id: str, req: SessionRenameRequest, edit_token: str | None = None):
+    def updater(db, record, payload: dict):
+        next_name = req.name.strip()
+        if record.name == next_name and payload.get("name") == next_name:
+            return False
+
+        payload["name"] = next_name
+        record.name = next_name
+        db.add(record)
+        return True
+
+    return _update_session_record(session_id, updater, edit_token=edit_token)
 
 
 @app.post("/api/sessions/{session_id}/start-round", response_model=SharedSessionResponse)
