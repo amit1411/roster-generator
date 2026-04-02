@@ -41,6 +41,11 @@ const SESSION_ACCESS_STORAGE_KEY = "badminton-roster:session-access";
 const VIEW_STORAGE_KEY = "badminton-roster:view";
 const SESSION_POLL_INTERVAL_MS = 12000;
 const ACTIVE_EDIT_GRACE_MS = 15000;
+const PLAIN_SESSION_WAIT_LABELS = new Set([
+  "Ending round...",
+  "Re-opening round...",
+  "Refreshing session...",
+]);
 
 const DEFAULT_CONFIG = {
   num_courts: 5,
@@ -595,6 +600,7 @@ export default function App() {
   }
 
   function sessionWaitText(label) {
+    if (PLAIN_SESSION_WAIT_LABELS.has(label)) return label;
     if (sessionElapsed < 3) return label;
     if (sessionElapsed < 8) return `${label} (${sessionElapsed}s)`;
     return `Waking up server... (${sessionElapsed}s)`;
@@ -606,7 +612,7 @@ export default function App() {
   }
 
   async function loadSessions() {
-    setSessionsLoadingLabel("Refreshing sessions...");
+    setSessionsLoadingLabel("Refreshing session...");
     setSessionsLoading(true);
     try {
       const list = await listSharedSessions();
@@ -762,9 +768,7 @@ export default function App() {
     const { sessionId, editToken } = currentSession;
 
     setPendingRoundAction({ stage, roundIndex, action: "end" });
-    setSessionLoadingLabel(
-      stage === "knockout" ? "Ending playoff round..." : "Ending round and updating rankings..."
-    );
+    setSessionLoadingLabel("Ending round...");
     setSessionLoading(true);
     try {
       await waitForNextPaint();
@@ -790,7 +794,7 @@ export default function App() {
     const { sessionId, editToken } = currentSession;
 
     setPendingRoundAction({ stage, roundIndex, action: "edit" });
-    setSessionLoadingLabel(`Reopening ${stage === "knockout" ? "playoff" : "league"} round...`);
+    setSessionLoadingLabel("Re-opening round...");
     setSessionLoading(true);
     try {
       await waitForNextPaint();
@@ -925,7 +929,7 @@ export default function App() {
         <div className="fixed inset-x-4 bottom-4 z-50 sm:inset-x-auto sm:right-4 sm:top-20 sm:bottom-auto sm:w-[360px]">
           <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-lg">
             <p className="text-sm font-medium text-blue-700">{sessionWaitText(sessionLoadingLabel)}</p>
-            {sessionElapsed >= 5 ? (
+            {sessionElapsed >= 5 && !PLAIN_SESSION_WAIT_LABELS.has(sessionLoadingLabel) ? (
               <p className="mt-2 text-sm text-blue-600">
                 The backend may be waking up. This can take a little longer on cold start.
               </p>
@@ -944,7 +948,7 @@ export default function App() {
         {sessionLoading && view !== "scoring" && (
           <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
             <p className="text-sm text-blue-700 font-medium">{sessionWaitText(sessionLoadingLabel)}</p>
-            {sessionElapsed >= 5 ? (
+            {sessionElapsed >= 5 && !PLAIN_SESSION_WAIT_LABELS.has(sessionLoadingLabel) ? (
               <p className="mt-2 text-sm text-blue-600">The backend may be waking up. This can take a little longer on cold start.</p>
             ) : null}
           </div>
@@ -1143,7 +1147,7 @@ export default function App() {
                     {sessionsLoading ? sessionWaitText(sessionsLoadingLabel) : "Refresh Sessions"}
                   </button>
                 </div>
-                {sessionsLoading && sessionElapsed >= 5 ? (
+                {sessionsLoading && sessionElapsed >= 5 && !PLAIN_SESSION_WAIT_LABELS.has(sessionsLoadingLabel) ? (
                   <p className="mt-3 text-sm text-gray-500">The backend may be waking up. Session refresh can take a little longer on cold start.</p>
                 ) : null}
                 <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
