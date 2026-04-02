@@ -453,6 +453,7 @@ export default function App() {
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionLoadingLabel, setSessionLoadingLabel] = useState("Syncing shared session...");
   const [sessionsLoadingLabel, setSessionsLoadingLabel] = useState("Refreshing sessions...");
+  const [pendingRoundAction, setPendingRoundAction] = useState(null);
   const [shareFeedback, setShareFeedback] = useState({ sessionId: null, text: "" });
   const timerRef = useRef(null);
   const sessionTimerRef = useRef(null);
@@ -736,6 +737,7 @@ export default function App() {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
     const { sessionId, editToken } = currentSession;
 
+    setPendingRoundAction({ stage, roundIndex, action: "start" });
     setSessionLoadingLabel(`Starting ${stage === "knockout" ? "playoff" : "league"} round...`);
     setSessionLoading(true);
     try {
@@ -750,6 +752,7 @@ export default function App() {
     } catch (e) {
       setError(e.message);
     } finally {
+      setPendingRoundAction(null);
       setSessionLoading(false);
     }
   }
@@ -758,6 +761,7 @@ export default function App() {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
     const { sessionId, editToken } = currentSession;
 
+    setPendingRoundAction({ stage, roundIndex, action: "end" });
     setSessionLoadingLabel(
       stage === "knockout" ? "Ending playoff round..." : "Ending round and updating rankings..."
     );
@@ -776,6 +780,7 @@ export default function App() {
     } catch (e) {
       setError(e.message);
     } finally {
+      setPendingRoundAction(null);
       setSessionLoading(false);
     }
   }
@@ -784,6 +789,7 @@ export default function App() {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
     const { sessionId, editToken } = currentSession;
 
+    setPendingRoundAction({ stage, roundIndex, action: "edit" });
     setSessionLoadingLabel(`Reopening ${stage === "knockout" ? "playoff" : "league"} round...`);
     setSessionLoading(true);
     try {
@@ -800,6 +806,7 @@ export default function App() {
     } catch (e) {
       setError(e.message);
     } finally {
+      setPendingRoundAction(null);
       setSessionLoading(false);
     }
   }
@@ -914,6 +921,19 @@ export default function App() {
         </div>
       </header>
 
+      {sessionLoading && view === "scoring" ? (
+        <div className="fixed inset-x-4 bottom-4 z-50 sm:inset-x-auto sm:right-4 sm:top-20 sm:bottom-auto sm:w-[360px]">
+          <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 shadow-lg">
+            <p className="text-sm font-medium text-blue-700">{sessionWaitText(sessionLoadingLabel)}</p>
+            {sessionElapsed >= 5 ? (
+              <p className="mt-2 text-sm text-blue-600">
+                The backend may be waking up. This can take a little longer on cold start.
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       <main className="max-w-7xl mx-auto px-4 py-6">
         {error && (
           <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
@@ -921,7 +941,7 @@ export default function App() {
           </div>
         )}
 
-        {sessionLoading && (
+        {sessionLoading && view !== "scoring" && (
           <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
             <p className="text-sm text-blue-700 font-medium">{sessionWaitText(sessionLoadingLabel)}</p>
             {sessionElapsed >= 5 ? (
@@ -1168,6 +1188,7 @@ export default function App() {
             onEndRound={handleEndRound}
             onScoreChange={handleScoreChange}
             onScoreCommit={handleScoreCommit}
+            pendingRoundAction={pendingRoundAction}
           />
         ) : null}
       </main>

@@ -377,6 +377,7 @@ function RoundList({
   onEditRound,
   onScoreChange,
   onScoreCommit,
+  pendingRoundAction,
 }) {
   if (rounds.length === 0) return null;
 
@@ -397,13 +398,23 @@ function RoundList({
         const isEnded = endedRounds[sourceIndex];
         const isLive = status === "live";
         const canEnd = isLive && roundScores.every(isScoreComplete);
+        const isPendingAction =
+          pendingRoundAction?.stage === stage && pendingRoundAction?.roundIndex === sourceIndex;
         const actionLabel = isEnded ? "Edit Scores" : isLive ? "End Round" : "Start Round";
+        const pendingActionLabel =
+          pendingRoundAction?.action === "end"
+            ? "Ending Round..."
+            : pendingRoundAction?.action === "edit"
+              ? "Reopening Round..."
+              : pendingRoundAction?.action === "start"
+                ? "Starting Round..."
+                : actionLabel;
         const actionClassName = isEnded
           ? "bg-amber-500 hover:bg-amber-600"
           : isLive
             ? "bg-rose-600 hover:bg-rose-700"
             : "bg-indigo-600 hover:bg-indigo-700";
-        const actionDisabled = !canEdit || (isEnded ? false : isLive ? !canEnd : !canStart);
+        const actionDisabled = isPendingAction || !canEdit || (isEnded ? false : isLive ? !canEnd : !canStart);
         const handleRoundAction = () =>
           isEnded
             ? onEditRound(stage, sourceIndex)
@@ -435,7 +446,7 @@ function RoundList({
                   disabled={actionDisabled}
                   className={`hidden min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 md:inline-flex ${actionClassName}`}
                 >
-                  {actionLabel}
+                  {isPendingAction ? pendingActionLabel : actionLabel}
                 </button>
               ) : (
                 <button
@@ -443,7 +454,7 @@ function RoundList({
                   disabled={actionDisabled}
                   className={`inline-flex min-h-11 items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 ${actionClassName}`}
                 >
-                  {actionLabel}
+                  {isPendingAction ? pendingActionLabel : actionLabel}
                 </button>
               )}
             </div>
@@ -523,7 +534,7 @@ function RoundList({
                     disabled={actionDisabled}
                     className={`inline-flex min-h-11 w-full items-center justify-center rounded-lg px-4 py-3 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500 ${actionClassName}`}
                   >
-                    End Round and Update Rankings
+                    {isPendingAction ? pendingActionLabel : "End Round and Update Rankings"}
                   </button>
                 </div>
               ) : null}
@@ -602,6 +613,7 @@ export default function ScoringPage({
   onEndRound,
   onScoreChange,
   onScoreCommit,
+  pendingRoundAction,
 }) {
   const leagueRounds = roster.rounds.map((round) => ({
     ...round,
@@ -753,9 +765,9 @@ export default function ScoringPage({
               </h3>
             </div>
 
-            <RoundList
-              title="Live League Rounds"
-              rounds={liveLeagueRounds}
+              <RoundList
+                title="Live League Rounds"
+                rounds={liveLeagueRounds}
               scoresByRound={leagueScoresByRound}
               activeRound={activeLeagueRound}
               endedRounds={endedLeagueRounds}
@@ -763,10 +775,11 @@ export default function ScoringPage({
               stage="league"
               onStartRound={onStartRound}
               onEndRound={onEndRound}
-              onEditRound={onEditRound}
-              onScoreChange={onScoreChange}
-              onScoreCommit={onScoreCommit}
-            />
+                onEditRound={onEditRound}
+                onScoreChange={onScoreChange}
+                onScoreCommit={onScoreCommit}
+                pendingRoundAction={pendingRoundAction}
+              />
 
             <CollapsibleRoundGroup
               title="Upcoming League Rounds"
@@ -779,10 +792,11 @@ export default function ScoringPage({
               stage="league"
               onStartRound={onStartRound}
               onEndRound={onEndRound}
-              onEditRound={onEditRound}
-              onScoreChange={onScoreChange}
-              onScoreCommit={onScoreCommit}
-            />
+                onEditRound={onEditRound}
+                onScoreChange={onScoreChange}
+                onScoreCommit={onScoreCommit}
+                pendingRoundAction={pendingRoundAction}
+              />
 
             <CollapsibleRoundGroup
               title="Completed League Rounds"
@@ -795,10 +809,11 @@ export default function ScoringPage({
               stage="league"
               onStartRound={onStartRound}
               onEndRound={onEndRound}
-              onEditRound={onEditRound}
-              onScoreChange={onScoreChange}
-              onScoreCommit={onScoreCommit}
-            />
+                onEditRound={onEditRound}
+                onScoreChange={onScoreChange}
+                onScoreCommit={onScoreCommit}
+                pendingRoundAction={pendingRoundAction}
+              />
 
             {hasBracket ? (
               <div className="space-y-5">
@@ -826,6 +841,7 @@ export default function ScoringPage({
                       onEditRound={onEditRound}
                       onScoreChange={onScoreChange}
                       onScoreCommit={onScoreCommit}
+                      pendingRoundAction={pendingRoundAction}
                     />
 
                     <CollapsibleRoundGroup
@@ -842,6 +858,7 @@ export default function ScoringPage({
                       onEditRound={onEditRound}
                       onScoreChange={onScoreChange}
                       onScoreCommit={onScoreCommit}
+                      pendingRoundAction={pendingRoundAction}
                     />
 
                     <CollapsibleRoundGroup
@@ -858,6 +875,7 @@ export default function ScoringPage({
                       onEditRound={onEditRound}
                       onScoreChange={onScoreChange}
                       onScoreCommit={onScoreCommit}
+                      pendingRoundAction={pendingRoundAction}
                     />
                   </>
                 ) : (
