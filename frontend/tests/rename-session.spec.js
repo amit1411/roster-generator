@@ -11,7 +11,7 @@ async function createSession(page) {
   await expect(page.getByRole("button", { name: "Rename Session" })).toBeVisible();
 }
 
-test("session can be renamed from scoring view and session list", async ({ page }) => {
+test("@smoke session can be renamed from scoring view and session list", async ({ page }) => {
   await createSession(page);
 
   await page.getByRole("button", { name: "Rename Session" }).click();

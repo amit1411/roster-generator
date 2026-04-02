@@ -8,7 +8,9 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test --grep @smoke",
+    "test:e2e:full": "playwright test"
   },
   "dependencies": {
     "react": "^19.2.4",
