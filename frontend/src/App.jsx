@@ -12,6 +12,7 @@ import {
   endSharedRound,
   fetchSharedSession,
   generateRoster,
+  renameSharedSession,
   listSharedSessions,
   startSharedRound,
   updateSharedScore,
@@ -79,9 +80,12 @@ function writeStorage(key, value) {
 
 function createSessionName() {
   const now = new Date();
-  const date = now.toISOString().slice(0, 10);
-  const shortId = String(now.getTime()).slice(-4);
-  return `${date}-${shortId}`;
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
 function normalizeConfig(config) {
@@ -282,7 +286,7 @@ function mergePendingScoreEdits(session, pendingEdits) {
   return nextSession;
 }
 
-function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, onDelete }) {
+function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, onDelete, onRename }) {
   const statusTone =
     session.status === "completed"
       ? "bg-emerald-100 text-emerald-700"
@@ -339,6 +343,13 @@ function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, o
           </div>
           <div className="grid grid-cols-1 gap-2">
             <button
+              onClick={() => onRename(session.sessionId, session.name)}
+              disabled={!canScore}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
+            >
+              Rename
+            </button>
+            <button
               onClick={() => onDelete(session.sessionId)}
               disabled={!canScore}
               className="inline-flex min-h-11 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400"
@@ -347,6 +358,63 @@ function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, o
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RenameSessionDialog({
+  open,
+  value,
+  loading,
+  onChange,
+  onCancel,
+  onSubmit,
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+      <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-5 shadow-xl">
+        <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Rename Session</p>
+        <h3 className="mt-1 text-lg font-semibold text-gray-900">Update the session name</h3>
+        <form
+          className="mt-4 space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          <label className="block text-sm font-medium text-gray-700" htmlFor="rename-session-name">
+            Session name
+            <input
+              id="rename-session-name"
+              type="text"
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              disabled={loading}
+              maxLength={120}
+              className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-gray-900 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 disabled:bg-gray-100"
+            />
+          </label>
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={loading}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !value.trim()}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+            >
+              {loading ? "Saving..." : "Save Name"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -452,6 +520,7 @@ export default function App() {
   const [view, setView] = useState(initialView);
   const [plannerMode, setPlannerMode] = useState("generate");
   const [plannerStep, setPlannerStep] = useState(1);
+  const [sessionDraftName, setSessionDraftName] = useState(createSessionName());
   const [sessionLoading, setSessionLoading] = useState(false);
   const [sessionAccess, setSessionAccess] = useState(savedSessionAccess);
   const [sessions, setSessions] = useState([]);
@@ -459,6 +528,9 @@ export default function App() {
   const [sessionLoadingLabel, setSessionLoadingLabel] = useState("Syncing shared session...");
   const [sessionsLoadingLabel, setSessionsLoadingLabel] = useState("Refreshing sessions...");
   const [pendingRoundAction, setPendingRoundAction] = useState(null);
+  const [renameDialog, setRenameDialog] = useState({ open: false, sessionId: null });
+  const [renameValue, setRenameValue] = useState("");
+  const [renameLoading, setRenameLoading] = useState(false);
   const [shareFeedback, setShareFeedback] = useState({ sessionId: null, text: "" });
   const timerRef = useRef(null);
   const sessionTimerRef = useRef(null);
@@ -632,7 +704,7 @@ export default function App() {
     setError(null);
     try {
       const session = await createSharedSession({
-        name: createSessionName(),
+        name: sessionDraftName.trim() || createSessionName(),
         roster,
         draw_config: {
           draw_type: config.draw_type,
@@ -646,6 +718,7 @@ export default function App() {
       setRoster(null);
       setPlannerMode("generate");
       setPlannerStep(1);
+      setSessionDraftName(createSessionName());
       setSessionIdInUrl(normalized.sessionId, normalized.editToken);
       setView("scoring");
       await loadSessions();
@@ -692,6 +765,52 @@ export default function App() {
   function showSessionsMode() {
     setGenerateError(null);
     setPlannerMode("sessions");
+  }
+
+  function openRenameDialog(sessionId, currentName) {
+    setRenameDialog({ open: true, sessionId });
+    setRenameValue(currentName || "");
+    setError(null);
+  }
+
+  function closeRenameDialog() {
+    if (renameLoading) return;
+    setRenameDialog({ open: false, sessionId: null });
+    setRenameValue("");
+  }
+
+  async function handleRenameSession() {
+    if (!renameDialog.sessionId) return;
+
+    const nextName = renameValue.trim();
+    if (!nextName) {
+      setError("Session name is required");
+      return;
+    }
+
+    setRenameLoading(true);
+    setSessionLoadingLabel("Renaming session...");
+    setSessionLoading(true);
+    try {
+      const editToken =
+        currentSession?.sessionId === renameDialog.sessionId
+          ? currentSession.editToken
+          : sessionAccess[renameDialog.sessionId] || null;
+      const updated = await renameSharedSession(renameDialog.sessionId, { name: nextName }, editToken);
+      const normalized = normalizeSession(updated);
+      if (currentSession?.sessionId === renameDialog.sessionId) {
+        setCurrentSession(normalized);
+      }
+      setRenameDialog({ open: false, sessionId: null });
+      setRenameValue("");
+      await loadSessions();
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRenameLoading(false);
+      setSessionLoading(false);
+    }
   }
 
   async function handleCopyShareLink(sessionId, mode = "view") {
@@ -1090,6 +1209,23 @@ export default function App() {
                           <p className={`text-sm ${roster ? "text-slate-300" : "text-gray-600"}`}>
                             {roster ? "The latest generated roster is ready to review below." : "Generate a roster to preview the rounds and courts here."}
                           </p>
+                          {roster ? (
+                            <label className={`block text-sm font-medium ${roster ? "text-slate-100" : "text-gray-700"}`} htmlFor="session-draft-name">
+                              Session name
+                              <input
+                                id="session-draft-name"
+                                type="text"
+                                value={sessionDraftName}
+                                onChange={(event) => setSessionDraftName(event.target.value)}
+                                maxLength={120}
+                                className={`mt-2 block w-full rounded-lg border px-3 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 ${
+                                  roster
+                                    ? "border-slate-500/50 bg-slate-950/40 text-white placeholder:text-slate-400"
+                                    : "border-gray-300 bg-white text-gray-900"
+                                }`}
+                              />
+                            </label>
+                          ) : null}
                           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                             <button
                               type="button"
@@ -1162,6 +1298,7 @@ export default function App() {
                         onOpen={openSession}
                         onCopy={handleCopyShareLink}
                         onDelete={handleDeleteSession}
+                        onRename={openRenameDialog}
                       />
                     ))
                   ) : (
@@ -1193,8 +1330,17 @@ export default function App() {
             onScoreChange={handleScoreChange}
             onScoreCommit={handleScoreCommit}
             pendingRoundAction={pendingRoundAction}
+            onRenameSession={() => openRenameDialog(currentSession.sessionId, currentSession.name)}
           />
         ) : null}
+        <RenameSessionDialog
+          open={renameDialog.open}
+          value={renameValue}
+          loading={renameLoading}
+          onChange={setRenameValue}
+          onCancel={closeRenameDialog}
+          onSubmit={handleRenameSession}
+        />
       </main>
     </div>
   );

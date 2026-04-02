@@ -63,6 +63,16 @@ export async function deleteSharedSession(sessionId, editToken) {
   }
 }
 
+export async function renameSharedSession(sessionId, payload, editToken) {
+  const res = await fetch(withEditToken(`/api/sessions/${sessionId}/rename`, editToken), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  return readJson(res);
+}
+
 export async function startSharedRound(sessionId, payload, editToken) {
   const res = await fetch(withEditToken(`/api/sessions/${sessionId}/start-round`, editToken), {
     method: "POST",

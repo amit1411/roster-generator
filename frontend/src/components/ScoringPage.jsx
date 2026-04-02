@@ -614,6 +614,7 @@ export default function ScoringPage({
   onScoreChange,
   onScoreCommit,
   pendingRoundAction,
+  onRenameSession,
 }) {
   const leagueRounds = roster.rounds.map((round) => ({
     ...round,
@@ -722,6 +723,14 @@ export default function ScoringPage({
               <p className="text-indigo-100">Access</p>
               <p className="font-semibold text-white">{canEdit ? "Scorer" : "View Only"}</p>
             </div>
+            {canEdit ? (
+              <button
+                onClick={onRenameSession}
+                className="inline-flex min-h-11 items-center justify-center rounded-lg border border-white/25 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/20"
+              >
+                Rename Session
+              </button>
+            ) : null}
             <button
               onClick={onBack}
               className="inline-flex min-h-11 items-center justify-center rounded-lg border border-white/25 bg-white/10 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-white/20"

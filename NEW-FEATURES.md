@@ -1,8 +1,9 @@
 ## TODO NEXT
 
+- Rename session
+
 ## BACKLOG
 
-- Rename session
 - Realtime sync with WebSockets
 - Player replacement mid-session
 
