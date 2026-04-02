@@ -563,10 +563,13 @@ def _delete_session_analytics(db, session_id: str):
         db.delete(row)
 
 
-def _rebuild_player_stats_summary(db):
-    db.execute(delete(PlayerStatsSummaryRecord))
-    db.flush()
+def _delete_completed_session_history(db, session_id: str):
+    summary = db.get(CompletedSessionStatsRecord, session_id)
+    if summary:
+        db.delete(summary)
 
+
+def _rebuild_player_stats_summary(db):
     session_rows = db.scalars(
         select(PlayerSessionStatsRecord).order_by(PlayerSessionStatsRecord.completed_at.desc())
     ).all()
@@ -615,36 +618,77 @@ def _rebuild_player_stats_summary(db):
         if aggregate["last_session_at"] is None or row.completed_at > aggregate["last_session_at"]:
             aggregate["last_session_at"] = row.completed_at
 
-    for player_name, values in aggregates.items():
-        db.add(
-            PlayerStatsSummaryRecord(
-                player_name=player_name,
-                sessions_played=values["sessions_played"],
-                matches_played=values["matches_played"],
-                wins=values["wins"],
-                losses=values["losses"],
-                draws=values["draws"],
-                points=values["points"],
-                point_difference=values["point_difference"],
-                league_matches_played=values["league_matches_played"],
-                league_wins=values["league_wins"],
-                league_losses=values["league_losses"],
-                league_draws=values["league_draws"],
-                league_points=values["league_points"],
-                league_point_difference=values["league_point_difference"],
-                knockout_matches_played=values["knockout_matches_played"],
-                knockout_wins=values["knockout_wins"],
-                knockout_losses=values["knockout_losses"],
-                knockout_draws=values["knockout_draws"],
-                knockout_points=values["knockout_points"],
-                knockout_point_difference=values["knockout_point_difference"],
-                championships=values["championships"],
-                best_partner=None,
-                best_partner_wins=0,
-                best_partner_matches=0,
-                last_session_at=values["last_session_at"],
+    player_names = list(aggregates.keys())
+    if player_names:
+        db.execute(
+            delete(PlayerStatsSummaryRecord).where(
+                PlayerStatsSummaryRecord.player_name.not_in(player_names)
             )
         )
+    else:
+        db.execute(delete(PlayerStatsSummaryRecord))
+        db.flush()
+        return
+
+    summary_rows = []
+    for player_name, values in aggregates.items():
+        summary_rows.append(
+            {
+                "player_name": player_name,
+                "sessions_played": values["sessions_played"],
+                "matches_played": values["matches_played"],
+                "wins": values["wins"],
+                "losses": values["losses"],
+                "draws": values["draws"],
+                "points": values["points"],
+                "point_difference": values["point_difference"],
+                "league_matches_played": values["league_matches_played"],
+                "league_wins": values["league_wins"],
+                "league_losses": values["league_losses"],
+                "league_draws": values["league_draws"],
+                "league_points": values["league_points"],
+                "league_point_difference": values["league_point_difference"],
+                "knockout_matches_played": values["knockout_matches_played"],
+                "knockout_wins": values["knockout_wins"],
+                "knockout_losses": values["knockout_losses"],
+                "knockout_draws": values["knockout_draws"],
+                "knockout_points": values["knockout_points"],
+                "knockout_point_difference": values["knockout_point_difference"],
+                "championships": values["championships"],
+                "best_partner": None,
+                "best_partner_wins": 0,
+                "best_partner_matches": 0,
+                "last_session_at": values["last_session_at"],
+            }
+        )
+
+    dialect_name = db.bind.dialect.name if db.bind else ""
+    if dialect_name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as dialect_insert
+    elif dialect_name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as dialect_insert
+    else:
+        dialect_insert = None
+
+    if dialect_insert is None:
+        db.execute(delete(PlayerStatsSummaryRecord))
+        db.flush()
+        for row in summary_rows:
+            db.add(PlayerStatsSummaryRecord(**row))
+        return
+
+    insert_stmt = dialect_insert(PlayerStatsSummaryRecord).values(summary_rows)
+    update_columns = {
+        column.name: insert_stmt.excluded[column.name]
+        for column in PlayerStatsSummaryRecord.__table__.columns
+        if column.name != "player_name"
+    }
+    db.execute(
+        insert_stmt.on_conflict_do_update(
+            index_elements=[PlayerStatsSummaryRecord.player_name],
+            set_=update_columns,
+        )
+    )
 
 
 def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict):
@@ -1337,6 +1381,7 @@ def delete_shared_session(session_id: str, edit_token: str | None = None):
             raise HTTPException(status_code=404, detail="Shared session not found")
         payload = _hydrate_legacy_session_storage(db, record, _upgrade_session_payload(deepcopy(record.data)))
         _require_edit_access(payload, edit_token)
+        completion_state = _get_session_completion_state(db, record, payload)
         round_records = db.scalars(
             select(SessionRoundRecord).where(SessionRoundRecord.session_id == session_id)
         ).all()
@@ -1347,8 +1392,11 @@ def delete_shared_session(session_id: str, edit_token: str | None = None):
         ).all()
         for score_record in score_records:
             db.delete(score_record)
-        _delete_session_analytics(db, session_id)
-        _rebuild_player_stats_summary(db)
+        if completion_state["completed"]:
+            _delete_completed_session_history(db, session_id)
+        else:
+            _delete_session_analytics(db, session_id)
+            _rebuild_player_stats_summary(db)
         db.delete(record)
     return Response(status_code=204)
 
