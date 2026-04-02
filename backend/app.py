@@ -11,7 +11,7 @@ from copy import deepcopy
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import OperationalError
 
 from database import (
@@ -564,8 +564,7 @@ def _delete_session_analytics(db, session_id: str):
 
 
 def _rebuild_player_stats_summary(db):
-    for row in db.scalars(select(PlayerStatsSummaryRecord)).all():
-        db.delete(row)
+    db.execute(delete(PlayerStatsSummaryRecord))
     db.flush()
 
     session_rows = db.scalars(
