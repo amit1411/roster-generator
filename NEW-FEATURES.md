@@ -1,9 +1,9 @@
 ## TODO NEXT
 
-- Rename session
 
 ## BACKLOG
 
+- Historical data and player stats
 - Realtime sync with WebSockets
 - Player replacement mid-session
 
@@ -12,3 +12,4 @@
 -  View-only vs scorer links with env variable ADMIN_RECOVERY_TOKEN
     - Should be tied to login and roles (admin)
 - Tournament summary / results page
+- Rename session

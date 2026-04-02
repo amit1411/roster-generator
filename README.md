@@ -2,6 +2,13 @@
 
 A web app for generating balanced badminton doubles rosters with constraint-based scheduling.
 
+## Project Docs
+
+- `AI_CONTEXT.md` for future AI chats/agents
+- `DATABASE_MODEL.md` for current persistence design
+- `TESTING.md` for build and Playwright notes
+- `NEW-FEATURES.md` for backlog and feature status
+
 ## Quick Start
 
 ### Postgres (Shared Sessions)
