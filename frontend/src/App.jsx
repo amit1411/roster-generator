@@ -730,6 +730,8 @@ export default function App() {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
     const { sessionId, editToken } = currentSession;
 
+    setSessionLoadingLabel(`Starting ${stage === "knockout" ? "playoff" : "league"} round...`);
+    setSessionLoading(true);
     try {
       const updated = await startSharedRound(sessionId, {
         stage,
@@ -741,6 +743,8 @@ export default function App() {
       setError(null);
     } catch (e) {
       setError(e.message);
+    } finally {
+      setSessionLoading(false);
     }
   }
 
@@ -748,6 +752,10 @@ export default function App() {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
     const { sessionId, editToken } = currentSession;
 
+    setSessionLoadingLabel(
+      stage === "knockout" ? "Ending playoff round..." : "Ending round and updating rankings..."
+    );
+    setSessionLoading(true);
     try {
       await flushRoundScoreEdits(sessionId, stage, roundIndex, editToken);
       const updated = await endSharedRound(sessionId, {
@@ -760,6 +768,8 @@ export default function App() {
       setError(null);
     } catch (e) {
       setError(e.message);
+    } finally {
+      setSessionLoading(false);
     }
   }
 
@@ -767,6 +777,8 @@ export default function App() {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
     const { sessionId, editToken } = currentSession;
 
+    setSessionLoadingLabel(`Reopening ${stage === "knockout" ? "playoff" : "league"} round...`);
+    setSessionLoading(true);
     try {
       await flushRoundScoreEdits(sessionId, stage, roundIndex, editToken);
       const updated = await editSharedRound(sessionId, {
@@ -779,6 +791,8 @@ export default function App() {
       setError(null);
     } catch (e) {
       setError(e.message);
+    } finally {
+      setSessionLoading(false);
     }
   }
 
