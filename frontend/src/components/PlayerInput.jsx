@@ -1,163 +1,320 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
-export default function PlayerInput({ players, setPlayers, fixedPairs, setFixedPairs }) {
-  const [name, setName] = useState("");
-  const [pairSelection, setPairSelection] = useState({ active: false, first: null });
+function PlayerTile({ player, actionLabel, onAction, selected = false, muted = false }) {
+  return (
+    <div
+      className={`rounded-2xl border p-4 shadow-sm transition-colors ${
+        selected
+          ? "border-indigo-200 bg-indigo-50"
+          : muted
+            ? "border-gray-200 bg-gray-50"
+            : "border-gray-200 bg-white"
+      }`}
+    >
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-gray-900">{player.fullName}</p>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-500">
+            <span className="rounded-full bg-white/80 px-2 py-1 font-medium text-gray-600">
+              {player.shortName}
+            </span>
+            <span className="rounded-full bg-gray-100 px-2 py-1">{player.playerId}</span>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => onAction(player.playerId)}
+          className={`inline-flex min-h-10 items-center justify-center rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+            selected
+              ? "border border-rose-200 bg-rose-50 text-rose-700 hover:bg-rose-100"
+              : "bg-indigo-600 text-white hover:bg-indigo-700"
+          }`}
+        >
+          {actionLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
 
-  function addPlayer(e) {
-    e.preventDefault();
-    const trimmed = name.trim();
-    if (!trimmed || players.includes(trimmed)) return;
-    setPlayers([...players, trimmed]);
-    setName("");
+export default function PlayerInput({
+  availablePlayers,
+  selectedPlayerIds,
+  setSelectedPlayerIds,
+  fixedPairIds,
+  setFixedPairIds,
+  onOpenPlayerManagement,
+}) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [pairSelection, setPairSelection] = useState({ active: false, first: "" });
+
+  const playersById = useMemo(
+    () => new Map(availablePlayers.map((player) => [player.playerId, player])),
+    [availablePlayers]
+  );
+
+  const selectedPlayers = selectedPlayerIds
+    .map((playerId) => playersById.get(playerId))
+    .filter(Boolean);
+
+  const selectedIdSet = new Set(selectedPlayerIds);
+  const availablePool = availablePlayers.filter((player) => !selectedIdSet.has(player.playerId));
+
+  const filteredPlayers = availablePool.filter((player) => {
+    const haystack = `${player.fullName} ${player.shortName} ${player.playerId}`.toLowerCase();
+    return haystack.includes(searchQuery.trim().toLowerCase());
+  });
+
+  function addPlayer(playerId) {
+    if (selectedIdSet.has(playerId)) return;
+    setSelectedPlayerIds([...selectedPlayerIds, playerId]);
   }
 
-  function removePlayer(p) {
-    setPlayers(players.filter((x) => x !== p));
-    setFixedPairs(fixedPairs.filter(([a, b]) => a !== p && b !== p));
-    if (pairSelection.first === p) setPairSelection({ active: false, first: null });
-  }
-
-  function togglePairMode(player) {
-    if (!pairSelection.active) {
-      setPairSelection({ active: true, first: player });
-      return;
-    }
-    if (pairSelection.first === player) {
-      setPairSelection({ active: false, first: null });
-      return;
-    }
-    const newPair = [pairSelection.first, player].sort();
-    const already = fixedPairs.some(
-      ([a, b]) => a === newPair[0] && b === newPair[1]
+  function removePlayer(playerId) {
+    setSelectedPlayerIds(selectedPlayerIds.filter((value) => value !== playerId));
+    setFixedPairIds(
+      fixedPairIds.filter(([firstId, secondId]) => firstId !== playerId && secondId !== playerId)
     );
-    if (already) {
-      setFixedPairs(fixedPairs.filter(([a, b]) => !(a === newPair[0] && b === newPair[1])));
-    } else {
-      setFixedPairs([...fixedPairs, newPair]);
+    if (pairSelection.first === playerId) {
+      setPairSelection({ active: false, first: "" });
     }
-    setPairSelection({ active: false, first: null });
   }
 
-  function getPairPartner(player) {
-    for (const [a, b] of fixedPairs) {
-      if (a === player) return b;
-      if (b === player) return a;
+  function togglePair(playerId) {
+    if (!pairSelection.active) {
+      setPairSelection({ active: true, first: playerId });
+      return;
     }
-    return null;
+
+    if (pairSelection.first === playerId) {
+      setPairSelection({ active: false, first: "" });
+      return;
+    }
+
+    const nextPair = [pairSelection.first, playerId].sort();
+    const alreadyExists = fixedPairIds.some(
+      ([firstId, secondId]) => firstId === nextPair[0] && secondId === nextPair[1]
+    );
+
+    if (alreadyExists) {
+      setFixedPairIds(
+        fixedPairIds.filter(
+          ([firstId, secondId]) => !(firstId === nextPair[0] && secondId === nextPair[1])
+        )
+      );
+    } else {
+      const nextFixedPairs = fixedPairIds.filter(
+        ([firstId, secondId]) =>
+          firstId !== nextPair[0] &&
+          secondId !== nextPair[0] &&
+          firstId !== nextPair[1] &&
+          secondId !== nextPair[1]
+      );
+      setFixedPairIds([...nextFixedPairs, nextPair]);
+    }
+
+    setPairSelection({ active: false, first: "" });
+  }
+
+  function removePair(index) {
+    setFixedPairIds(fixedPairIds.filter((_, currentIndex) => currentIndex !== index));
+  }
+
+  function getPairPartner(playerId) {
+    for (const [firstId, secondId] of fixedPairIds) {
+      if (firstId === playerId) return secondId;
+      if (secondId === playerId) return firstId;
+    }
+    return "";
   }
 
   const pairColors = [
-    "bg-blue-100 border-blue-400",
-    "bg-green-100 border-green-400",
-    "bg-purple-100 border-purple-400",
-    "bg-amber-100 border-amber-400",
-    "bg-pink-100 border-pink-400",
-    "bg-cyan-100 border-cyan-400",
-    "bg-rose-100 border-rose-400",
-    "bg-teal-100 border-teal-400",
+    "bg-blue-100 border-blue-300",
+    "bg-green-100 border-green-300",
+    "bg-amber-100 border-amber-300",
+    "bg-rose-100 border-rose-300",
+    "bg-cyan-100 border-cyan-300",
+    "bg-fuchsia-100 border-fuchsia-300",
   ];
 
-  function getPairColor(player) {
-    const idx = fixedPairs.findIndex(([a, b]) => a === player || b === player);
-    if (idx === -1) return "";
-    return pairColors[idx % pairColors.length];
+  function getPairColor(playerId) {
+    const index = fixedPairIds.findIndex(([firstId, secondId]) => firstId === playerId || secondId === playerId);
+    if (index === -1) return "";
+    return pairColors[index % pairColors.length];
   }
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-5">
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h2 className="text-lg font-semibold text-gray-800">Players</h2>
-        <span className="w-fit rounded-full bg-gray-100 px-2.5 py-0.5 text-sm text-gray-500">
-          {players.length} players
-        </span>
-      </div>
-
-      <form onSubmit={addPlayer} className="mb-4 flex flex-col gap-2 sm:flex-row">
-        <input
-          type="text"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Add player name..."
-          className="flex-1 rounded-lg border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        />
-        <button
-          type="submit"
-          className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-3 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
-        >
-          Add
-        </button>
-      </form>
-
-      {pairSelection.active && (
-        <div className="mb-3 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm text-indigo-700">
-          Select a partner for <strong>{pairSelection.first}</strong> or click them again to cancel
-        </div>
-      )}
-
-      <div className="space-y-1.5 max-h-80 overflow-y-auto">
-        {players.map((p) => {
-          const partner = getPairPartner(p);
-          const colorClass = getPairColor(p);
-          const isFirstSelected = pairSelection.active && pairSelection.first === p;
-
-          return (
-            <div
-              key={p}
-              className={`flex flex-col gap-2 rounded-lg border px-3 py-3 text-sm transition-colors cursor-pointer sm:flex-row sm:items-center sm:justify-between
-                ${isFirstSelected ? "bg-indigo-100 border-indigo-400 ring-2 ring-indigo-300" : colorClass || "border-gray-200 hover:bg-gray-50"}`}
-              onClick={() => togglePairMode(p)}
-            >
-              <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <span className="font-medium text-gray-800">{p}</span>
-                {partner && (
-                  <span className="text-xs text-gray-500 bg-white/70 px-1.5 py-0.5 rounded">
-                    paired with {partner}
-                  </span>
-                )}
-              </div>
+    <div className="space-y-6">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Session Players</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Pick players from the registry for this session. Using the directory avoids typos and keeps names consistent.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="rounded-full bg-gray-100 px-2.5 py-1 text-sm font-medium text-gray-600">
+                {selectedPlayers.length} selected
+              </span>
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  removePlayer(p);
-                }}
-                className="self-end p-1 text-gray-400 transition-colors hover:text-red-500 sm:self-auto"
-                title="Remove player"
+                type="button"
+                onClick={onOpenPlayerManagement}
+                className="inline-flex min-h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
               >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                Manage Players
               </button>
             </div>
-          );
-        })}
+          </div>
+
+          {pairSelection.active ? (
+            <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+              Select a partner for{" "}
+              <strong>{playersById.get(pairSelection.first)?.shortName || playersById.get(pairSelection.first)?.fullName}</strong>
+              {" "}or tap the same player again to cancel.
+            </div>
+          ) : null}
+
+          <div className="mt-4 space-y-3">
+            {selectedPlayers.length > 0 ? (
+              selectedPlayers.map((player) => {
+                const partnerId = getPairPartner(player.playerId);
+                const partner = partnerId ? playersById.get(partnerId) : null;
+                const isFirstSelected = pairSelection.active && pairSelection.first === player.playerId;
+                const pairColor = getPairColor(player.playerId);
+
+                return (
+                  <div
+                    key={player.playerId}
+                    className={`rounded-2xl border p-4 shadow-sm transition-colors cursor-pointer ${
+                      isFirstSelected
+                        ? "border-indigo-300 bg-indigo-100 ring-2 ring-indigo-200"
+                        : pairColor || "border-gray-200 bg-white hover:bg-gray-50"
+                    }`}
+                    onClick={() => togglePair(player.playerId)}
+                  >
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-gray-900">{player.fullName}</p>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-500">
+                          <span className="rounded-full bg-white/80 px-2 py-1 font-medium text-gray-600">
+                            {player.shortName}
+                          </span>
+                          <span className="rounded-full bg-white/80 px-2 py-1">{player.playerId}</span>
+                          {partner ? (
+                            <span className="rounded-full bg-white/80 px-2 py-1 font-medium text-indigo-700">
+                              paired with {partner.shortName}
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removePlayer(player.playerId);
+                        }}
+                        className="inline-flex min-h-10 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
+                No players selected yet. Add them from the player directory on the right.
+              </div>
+            )}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Player Directory</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Search by full name, short name, or player ID.
+              </p>
+            </div>
+            <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-sm font-medium text-indigo-700">
+              {availablePlayers.length} total
+            </span>
+          </div>
+
+          <div className="mt-4">
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="Search players..."
+              className="block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+
+          <div className="mt-4 max-h-[30rem] space-y-3 overflow-y-auto pr-1">
+            {filteredPlayers.length > 0 ? (
+              filteredPlayers.map((player) => (
+                <PlayerTile
+                  key={player.playerId}
+                  player={player}
+                  actionLabel="Add"
+                  onAction={addPlayer}
+                />
+              ))
+            ) : (
+              <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
+                {availablePlayers.length > 0
+                  ? "No players match this search."
+                  : "No players in the directory yet. Create players first to build a roster."}
+              </div>
+            )}
+          </div>
+        </section>
       </div>
 
-      {fixedPairs.length > 0 && (
-        <div className="mt-4 pt-3 border-t border-gray-100">
-          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide mb-2">Fixed Pairs</p>
-          <div className="flex flex-wrap gap-2">
-            {fixedPairs.map(([a, b], i) => (
-              <span
-                key={`${a}-${b}`}
-                className={`inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${pairColors[i % pairColors.length]}`}
-              >
-                <span className="truncate">{a} & {b}</span>
-                <button
-                  onClick={() => setFixedPairs(fixedPairs.filter((_, j) => j !== i))}
-                  className="hover:text-red-600 ml-0.5"
-                >
-                  &times;
-                </button>
-              </span>
-            ))}
+      {fixedPairIds.length > 0 ? (
+        <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Fixed Pairs</h2>
+              <p className="mt-1 text-sm text-gray-600">
+                Current locked partnerships for this session.
+              </p>
+            </div>
+            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-sm font-medium text-gray-600">
+              {fixedPairIds.length} pairs
+            </span>
           </div>
-        </div>
-      )}
 
-      <p className="mt-3 text-xs text-gray-400">
-        Click a player to start pairing, then click their partner. Click a paired player to unpair.
-      </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {fixedPairIds.map(([firstId, secondId], index) => {
+              const firstPlayer = playersById.get(firstId);
+              const secondPlayer = playersById.get(secondId);
+              if (!firstPlayer || !secondPlayer) return null;
+
+              return (
+                <span
+                  key={`${firstId}-${secondId}`}
+                  className="inline-flex items-center gap-2 rounded-full border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-medium text-indigo-700"
+                >
+                  {firstPlayer.shortName} & {secondPlayer.shortName}
+                  <button
+                    type="button"
+                    onClick={() => removePair(index)}
+                    className="text-indigo-500 transition-colors hover:text-rose-600"
+                    aria-label={`Remove pair ${firstPlayer.shortName} and ${secondPlayer.shortName}`}
+                  >
+                    &times;
+                  </button>
+                </span>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

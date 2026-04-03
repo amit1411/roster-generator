@@ -16,6 +16,7 @@ from sqlalchemy.exc import OperationalError
 
 from database import (
     CompletedSessionStatsRecord,
+    PlayerRecord,
     PlayerPartnerSessionStatsRecord,
     PlayerSessionStatsRecord,
     PlayerStatsSummaryRecord,
@@ -30,6 +31,11 @@ from roster_engine import generate_roster, validate_roster, RosterError
 app = FastAPI(title="Badminton Roster API")
 
 ADMIN_RECOVERY_TOKEN = os.getenv("ADMIN_RECOVERY_TOKEN", "thisismytoken")
+DEFAULT_PLAYER_DIRECTORY = [
+    "DG", "Hari", "Ashok", "Jitu", "Satya", "Krupa", "Kishore", "Malli",
+    "Chiru", "Vivek", "Dhawan", "Avinash", "Vikram", "Marideva", "Sai",
+    "Amit", "Varun", "Phani", "Bhaskar", "Sai Krishna", "Adi", "Bharat",
+]
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,6 +48,8 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     init_db()
+    with get_db_session() as db:
+        _ensure_player_registry(db)
 
 
 class RosterRequest(BaseModel):
@@ -97,10 +105,18 @@ class DrawConfig(BaseModel):
     knockout_qualifiers: int = 4
 
 
+class SessionPlayerReference(BaseModel):
+    player_id: str
+    full_name: str
+    short_name: str
+
+
 class SharedSessionCreateRequest(BaseModel):
     roster: RosterResponse
     draw_config: DrawConfig
     name: str | None = None
+    selected_players: list[SessionPlayerReference] = []
+    fixed_pair_player_ids: list[list[str]] = []
 
 
 class SharedSessionResponse(BaseModel):
@@ -145,7 +161,18 @@ class CompletedSessionStatsResponse(BaseModel):
     top_player: str | None = None
 
 
+class PlayerResponse(BaseModel):
+    player_id: str
+    full_name: str
+    short_name: str
+    source: str
+    created_at: str | None = None
+
+
 class PlayerStatsSummaryResponse(BaseModel):
+    player_id: str | None = None
+    full_name: str | None = None
+    short_name: str | None = None
     player_name: str
     sessions_played: int
     matches_played: int
@@ -172,6 +199,9 @@ class PlayerStatsSummaryResponse(BaseModel):
 
 
 class PartnerStatsResponse(BaseModel):
+    partner_id: str | None = None
+    full_name: str | None = None
+    short_name: str | None = None
     partner_name: str
     matches_played: int
     wins: int
@@ -230,6 +260,31 @@ class ScoreMutationResponse(BaseModel):
     version: int
 
 
+class PlayerCreateRequest(BaseModel):
+    full_name: str
+    short_name: str
+
+    @field_validator("full_name")
+    @classmethod
+    def validate_full_name(cls, value: str):
+        cleaned = " ".join(value.strip().split())
+        if not cleaned:
+            raise ValueError("Value is required")
+        if len(cleaned) > 120:
+            raise ValueError("Value must be 120 characters or fewer")
+        return cleaned
+
+    @field_validator("short_name")
+    @classmethod
+    def validate_short_name(cls, value: str):
+        cleaned = " ".join(value.strip().split())
+        if not cleaned:
+            raise ValueError("Value is required")
+        if len(cleaned) > 60:
+            raise ValueError("Short name must be 60 characters or fewer")
+        return cleaned
+
+
 def _create_empty_scores(rounds: list[RoundResult]) -> list[list[dict[str, int | str]]]:
     return [
         [
@@ -246,6 +301,124 @@ def _ensure_score_slot(scores: list[list[dict[str, int | str]]], round_index: in
 
     while len(scores[round_index]) <= court_index:
         scores[round_index].append({"teamA": "", "teamB": ""})
+
+
+def _normalize_player_name(value: str) -> str:
+    return " ".join(value.strip().lower().split())
+
+
+def _generate_player_id() -> str:
+    return f"plr_{secrets.token_hex(4)}"
+
+
+def _serialize_player(row: PlayerRecord) -> PlayerResponse:
+    return PlayerResponse(
+        player_id=row.player_id,
+        full_name=row.full_name,
+        short_name=row.short_name,
+        source=row.source,
+        created_at=row.created_at.isoformat() if row.created_at else None,
+    )
+
+
+def _create_player_record(db, full_name: str, short_name: str, *, source: str):
+    normalized_full_name = _normalize_player_name(full_name)
+    normalized_short_name = _normalize_player_name(short_name)
+    player = PlayerRecord(
+        player_id=_generate_player_id(),
+        full_name=full_name,
+        short_name=short_name,
+        normalized_full_name=normalized_full_name,
+        normalized_short_name=normalized_short_name,
+        source=source,
+    )
+    db.add(player)
+    db.flush()
+    return player
+
+
+def _iter_legacy_player_names(payload: dict):
+    player_directory = payload.get("player_directory") or []
+    for player in player_directory:
+        if isinstance(player, dict):
+            if player.get("short_name"):
+                yield player["short_name"]
+            if player.get("full_name"):
+                yield player["full_name"]
+
+    for round_data in payload.get("roster", {}).get("rounds", []):
+        for court in round_data.get("courts", []):
+            for name in court.get("team_a", []):
+                yield name
+            for name in court.get("team_b", []):
+                yield name
+        for name in round_data.get("resting", []):
+            yield name
+
+
+def _ensure_player_registry(db):
+    existing_players = db.scalars(select(PlayerRecord).order_by(PlayerRecord.full_name.asc())).all()
+    existing_full_names = {row.normalized_full_name for row in existing_players}
+    existing_short_names = {row.normalized_short_name for row in existing_players}
+    discovered_names = set()
+
+    session_records = db.scalars(select(SharedSessionRecord)).all()
+    for record in session_records:
+        payload = _upgrade_session_payload(deepcopy(record.data))
+        for name in _iter_legacy_player_names(payload):
+            cleaned = " ".join(str(name).strip().split())
+            if cleaned:
+                discovered_names.add(cleaned)
+
+    for row in db.scalars(select(PlayerSessionStatsRecord.player_name)).all():
+        cleaned = " ".join(str(row).strip().split())
+        if cleaned:
+            discovered_names.add(cleaned)
+
+    for row in db.scalars(select(PlayerPartnerSessionStatsRecord.player_name)).all():
+        cleaned = " ".join(str(row).strip().split())
+        if cleaned:
+            discovered_names.add(cleaned)
+
+    for row in db.scalars(select(PlayerPartnerSessionStatsRecord.partner_name)).all():
+        cleaned = " ".join(str(row).strip().split())
+        if cleaned:
+            discovered_names.add(cleaned)
+
+    for row in db.scalars(select(PlayerStatsSummaryRecord.player_name)).all():
+        cleaned = " ".join(str(row).strip().split())
+        if cleaned:
+            discovered_names.add(cleaned)
+
+    if not existing_players and not discovered_names:
+        discovered_names.update(DEFAULT_PLAYER_DIRECTORY)
+
+    changed = False
+    for name in sorted(discovered_names):
+        normalized = _normalize_player_name(name)
+        if normalized in existing_full_names or normalized in existing_short_names:
+            continue
+        player = _create_player_record(db, name, name, source="legacy")
+        existing_full_names.add(player.normalized_full_name)
+        existing_short_names.add(player.normalized_short_name)
+        changed = True
+
+    if changed:
+        db.flush()
+
+
+def _find_player_by_name(db, name: str) -> PlayerRecord | None:
+    normalized = _normalize_player_name(name)
+    if not normalized:
+        return None
+    player = db.scalar(
+        select(PlayerRecord).where(PlayerRecord.normalized_short_name == normalized)
+    )
+    if player:
+        return player
+    return db.scalar(
+        select(PlayerRecord).where(PlayerRecord.normalized_full_name == normalized)
+    )
 
 
 def _upgrade_session_payload(payload: dict) -> dict:
@@ -900,9 +1073,13 @@ def _to_completed_session_stats_response(row: CompletedSessionStatsRecord) -> Co
     )
 
 
-def _to_player_stats_summary_response(row: PlayerStatsSummaryRecord) -> PlayerStatsSummaryResponse:
+def _to_player_stats_summary_response(db, row: PlayerStatsSummaryRecord) -> PlayerStatsSummaryResponse:
     win_rate = round((row.wins / row.matches_played) * 100, 1) if row.matches_played else 0.0
+    player = _find_player_by_name(db, row.player_name)
     return PlayerStatsSummaryResponse(
+        player_id=player.player_id if player else None,
+        full_name=player.full_name if player else row.player_name,
+        short_name=player.short_name if player else row.player_name,
         player_name=row.player_name,
         sessions_played=row.sessions_played,
         matches_played=row.matches_played,
@@ -924,9 +1101,6 @@ def _to_player_stats_summary_response(row: PlayerStatsSummaryRecord) -> PlayerSt
         knockout_points=row.knockout_points,
         knockout_point_difference=row.knockout_point_difference,
         championships=row.championships,
-        best_partner=row.best_partner,
-        best_partner_wins=row.best_partner_wins,
-        best_partner_matches=row.best_partner_matches,
         win_rate=win_rate,
         last_session_at=row.last_session_at.isoformat() if row.last_session_at else None,
     )
@@ -965,7 +1139,9 @@ def _serialize_session(record: SharedSessionRecord, edit_token: str | None = Non
 
         can_undo = len(payload.get("undo_stack", [])) > 0
         response_payload = {
-            key: value for key, value in payload.items() if key not in {"undo_stack", "edit_token"}
+            key: value
+            for key, value in payload.items()
+            if key in {"name", "roster", "draw_config"}
         }
         can_edit = _is_valid_edit_token(payload, edit_token)
         return SharedSessionResponse(
@@ -1268,9 +1444,12 @@ def create_shared_session(req: SharedSessionCreateRequest):
         "edit_token": secrets.token_urlsafe(12),
         "roster": req.roster.model_dump(),
         "draw_config": req.draw_config.model_dump(),
+        "player_directory": [player.model_dump() for player in req.selected_players],
+        "fixed_pair_player_ids": req.fixed_pair_player_ids,
     }
 
     with get_db_session() as db:
+        _ensure_player_registry(db)
         while True:
             session_id = _generate_session_id()
             existing = db.scalar(
@@ -1306,9 +1485,41 @@ def list_shared_sessions():
         return [_serialize_session_summary(record, db=db) for record in records]
 
 
+@app.get("/api/players", response_model=list[PlayerResponse])
+def list_players():
+    with get_db_session() as db:
+        _ensure_player_registry(db)
+        rows = db.scalars(select(PlayerRecord).order_by(PlayerRecord.full_name.asc())).all()
+        return [_serialize_player(row) for row in rows]
+
+
+@app.post("/api/players", response_model=PlayerResponse, status_code=201)
+def create_player(req: PlayerCreateRequest):
+    with get_db_session() as db:
+        _ensure_player_registry(db)
+        normalized_full_name = _normalize_player_name(req.full_name)
+        normalized_short_name = _normalize_player_name(req.short_name)
+
+        existing_full = db.scalar(
+            select(PlayerRecord).where(PlayerRecord.normalized_full_name == normalized_full_name)
+        )
+        if existing_full:
+            raise HTTPException(status_code=409, detail="A player with this full name already exists")
+
+        existing_short = db.scalar(
+            select(PlayerRecord).where(PlayerRecord.normalized_short_name == normalized_short_name)
+        )
+        if existing_short:
+            raise HTTPException(status_code=409, detail="A player with this short name already exists")
+
+        player = _create_player_record(db, req.full_name, req.short_name, source="manual")
+        return _serialize_player(player)
+
+
 @app.get("/api/history/sessions", response_model=list[CompletedSessionStatsResponse])
 def list_completed_sessions():
     with get_db_session() as db:
+        _ensure_player_registry(db)
         _ensure_completed_session_stats(db)
         rows = db.scalars(
             select(CompletedSessionStatsRecord).order_by(CompletedSessionStatsRecord.completed_at.desc())
@@ -1319,6 +1530,7 @@ def list_completed_sessions():
 @app.get("/api/stats/players", response_model=list[PlayerStatsSummaryResponse])
 def list_player_stats():
     with get_db_session() as db:
+        _ensure_player_registry(db)
         _ensure_completed_session_stats(db)
         rows = db.scalars(
             select(PlayerStatsSummaryRecord).order_by(
@@ -1329,12 +1541,13 @@ def list_player_stats():
                 PlayerStatsSummaryRecord.player_name.asc(),
             )
         ).all()
-        return [_to_player_stats_summary_response(row) for row in rows]
+        return [_to_player_stats_summary_response(db, row) for row in rows]
 
 
 @app.get("/api/stats/players/{player_name}", response_model=PlayerStatsDetailResponse)
 def get_player_stats(player_name: str):
     with get_db_session() as db:
+        _ensure_player_registry(db)
         _ensure_completed_session_stats(db)
         row = db.get(PlayerStatsSummaryRecord, player_name)
         if not row:
@@ -1352,19 +1565,24 @@ def get_player_stats(player_name: str):
 
         top_partners = sorted(
             (
-                {
-                    "partner_name": partner_name,
-                    "matches_played": totals["matches"],
-                    "wins": totals["wins"],
-                    "win_rate": round((totals["wins"] / totals["matches"]) * 100, 1) if totals["matches"] else 0.0,
-                }
+                (
+                    lambda partner: {
+                        "partner_id": partner.player_id if partner else None,
+                        "full_name": partner.full_name if partner else partner_name,
+                        "short_name": partner.short_name if partner else partner_name,
+                        "partner_name": partner_name,
+                        "matches_played": totals["matches"],
+                        "wins": totals["wins"],
+                        "win_rate": round((totals["wins"] / totals["matches"]) * 100, 1) if totals["matches"] else 0.0,
+                    }
+                )(_find_player_by_name(db, partner_name))
                 for partner_name, totals in partner_totals.items()
                 if totals["matches"] > 0
             ),
             key=lambda item: (-item["win_rate"], -item["wins"], -item["matches_played"], item["partner_name"]),
         )[:3]
 
-        summary = _to_player_stats_summary_response(row)
+        summary = _to_player_stats_summary_response(db, row)
         return PlayerStatsDetailResponse(
             **summary.model_dump(),
             top_partners=[PartnerStatsResponse(**partner) for partner in top_partners],

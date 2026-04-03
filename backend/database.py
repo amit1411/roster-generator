@@ -54,6 +54,30 @@ class SharedSessionRecord(Base):
     )
 
 
+class PlayerRecord(Base):
+    """Registered player directory entry."""
+
+    __tablename__ = "players"
+
+    player_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    full_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    short_name: Mapped[str] = mapped_column(String(60), nullable=False)
+    normalized_full_name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
+    normalized_short_name: Mapped[str] = mapped_column(String(60), nullable=False, unique=True)
+    source: Mapped[str] = mapped_column(String(24), nullable=False, default="manual")
+    created_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class SessionRoundRecord(Base):
     """Persisted per-round session state."""
 
@@ -178,6 +202,14 @@ engine = create_engine(DATABASE_URL, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 ANALYTICS_SCHEMA_UPDATES = {
+    "players": [
+        ("short_name", "VARCHAR(60)", "NOT NULL DEFAULT ''"),
+        ("normalized_full_name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
+        ("normalized_short_name", "VARCHAR(60)", "NOT NULL DEFAULT ''"),
+        ("source", "VARCHAR(24)", "NOT NULL DEFAULT 'manual'"),
+        ("created_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+        ("updated_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
     "completed_session_stats": [
         ("session_name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
         ("draw_type", "VARCHAR(32)", "NOT NULL DEFAULT 'round_robin'"),

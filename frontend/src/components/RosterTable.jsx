@@ -11,6 +11,22 @@ export default function RosterTable({ data, fixedPairs }) {
     return fixedPairSet.has(key);
   }
 
+  function CollapsibleSummary({ title, hint }) {
+    return (
+      <summary className="flex min-h-[72px] cursor-pointer list-none items-center justify-between gap-3 px-5 py-4">
+        <div>
+          <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-700">{title}</h3>
+          <p className="mt-1 text-xs text-gray-400">{hint}</p>
+        </div>
+        <span className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-gray-50 text-gray-500 transition-transform group-open:rotate-180">
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+        </span>
+      </summary>
+    );
+  }
+
   const maxResting = Math.max(...rounds.map((r) => r.resting.length), 0);
 
   return (
@@ -139,11 +155,9 @@ export default function RosterTable({ data, fixedPairs }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <details className="rounded-xl border border-gray-200 bg-white shadow-sm">
-          <summary className="cursor-pointer list-none px-5 py-4">
-            <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Rest Distribution</h3>
-          </summary>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 md:items-start">
+        <details className="group self-start rounded-xl border border-gray-200 bg-white shadow-sm">
+          <CollapsibleSummary title="Rest Distribution" hint="Tap to expand the player-by-player balance." />
           <div className="border-t border-gray-100 px-5 py-4">
             <div className="space-y-1.5">
               {Object.entries(rest_counts)
@@ -166,10 +180,8 @@ export default function RosterTable({ data, fixedPairs }) {
 
         <div className="space-y-4">
           {Object.keys(fixed_pair_counts).length > 0 && (
-            <details className="rounded-xl border border-gray-200 bg-white shadow-sm">
-              <summary className="cursor-pointer list-none px-5 py-4">
-                <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Fixed Pair Games</h3>
-              </summary>
+            <details className="group self-start rounded-xl border border-gray-200 bg-white shadow-sm">
+              <CollapsibleSummary title="Fixed Pair Games" hint="Tap to expand the partnership totals." />
               <div className="border-t border-gray-100 px-5 py-4">
                 <div className="space-y-1.5">
                   {Object.entries(fixed_pair_counts)

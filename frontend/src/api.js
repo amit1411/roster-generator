@@ -136,6 +136,21 @@ export async function listCompletedSessions() {
   return readJson(res);
 }
 
+export async function listPlayers() {
+  const res = await fetch(`${API_BASE}/api/players`);
+  return readJson(res);
+}
+
+export async function createPlayer(payload) {
+  const res = await fetch(`${API_BASE}/api/players`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  return readJson(res);
+}
+
 export async function listPlayerStats() {
   const res = await fetch(`${API_BASE}/api/stats/players`);
   return readJson(res);

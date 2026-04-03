@@ -7,8 +7,10 @@ import ScoringPage from "./components/ScoringPage";
 import ActiveSessionsPage from "./components/ActiveSessionsPage";
 import HistoryPage from "./components/HistoryPage";
 import PlayerStatsPage from "./components/PlayerStatsPage";
+import PlayersPage from "./components/PlayersPage";
 import {
   batchUpdateSharedScores,
+  createPlayer,
   createSharedSession,
   deleteSharedSession,
   editSharedRound,
@@ -17,6 +19,7 @@ import {
   fetchPlayerStats,
   generateRoster,
   listCompletedSessions,
+  listPlayers,
   listPlayerStats,
   renameSharedSession,
   listSharedSessions,
@@ -24,23 +27,6 @@ import {
   updateSharedScore,
 } from "./api";
 import { buildKnockoutRounds, createScoresForRounds } from "./scoring";
-
-const DEFAULT_PLAYERS = [
-  "DG", "Hari", "Ashok", "Jitu", "Satya", "Krupa", "Kishore", "Malli",
-  "Chiru", "Vivek", "Dhawan", "Avinash", "Vikram", "Marideva", "Sai",
-  "Amit", "Varun", "Phani", "Bhaskar", "Sai Krishna", "Adi", "Bharat",
-];
-
-const DEFAULT_PAIRS = [
-  ["DG", "Hari"],
-  ["Ashok", "Jitu"],
-  ["Krupa", "Satya"],
-  ["Kishore", "Malli"],
-  ["Chiru", "Vivek"],
-  ["Avinash", "Dhawan"],
-  ["Marideva", "Vikram"],
-  ["Amit", "Sai"],
-];
 
 const PLANNER_STORAGE_KEY = "badminton-roster:planner";
 const SESSION_STORAGE_KEY = "badminton-roster:session";
@@ -96,6 +82,50 @@ function createSessionName() {
 
 function normalizeConfig(config) {
   return { ...DEFAULT_CONFIG, ...config };
+}
+
+function getPlannerRosterSignature(selectedPlayerIds, fixedPairIds, config, directoryPlayers) {
+  const playersById = new Map(directoryPlayers.map((player) => [player.playerId, player]));
+  const selectedPlayers = selectedPlayerIds
+    .map((playerId) => playersById.get(playerId))
+    .filter(Boolean)
+    .map((player) => ({
+      playerId: player.playerId,
+      shortName: player.shortName,
+    }));
+
+  const normalizedPairs = fixedPairIds
+    .map(([firstId, secondId]) => {
+      const firstPlayer = playersById.get(firstId);
+      const secondPlayer = playersById.get(secondId);
+      if (!firstPlayer || !secondPlayer) return null;
+      return {
+        playerIds: [firstId, secondId].sort(),
+        shortNames: [firstPlayer.shortName, secondPlayer.shortName].sort(),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.playerIds.join("|").localeCompare(b.playerIds.join("|")));
+
+  const normalizedConfig = {
+    num_courts: config.num_courts,
+    court_numbers: config.court_numbers,
+    rounds: config.rounds,
+    limits: Object.fromEntries(Object.entries(config.limits || {}).sort(([a], [b]) => a.localeCompare(b))),
+    pair_games: config.pair_games,
+    pair_start_round: config.pair_start_round,
+    max_consecutive_rest: config.max_consecutive_rest,
+    seed: config.seed,
+    draw_type: config.draw_type,
+    league_meetings: config.league_meetings,
+    knockout_qualifiers: config.knockout_qualifiers,
+  };
+
+  return JSON.stringify({
+    players: selectedPlayers,
+    fixedPairs: normalizedPairs,
+    config: normalizedConfig,
+  });
 }
 
 function getLeagueRequestPayload(players, fixedPairs, config) {
@@ -466,7 +496,7 @@ function PlannerModeCard({ title, description, active, onClick }) {
   );
 }
 
-function PlannerStepper({ currentStep }) {
+function PlannerStepper({ currentStep, onStepChange }) {
   const steps = [
     { id: 1, label: "Players & Pairs" },
     { id: 2, label: "Settings" },
@@ -478,10 +508,18 @@ function PlannerStepper({ currentStep }) {
       {steps.map((step) => {
         const isActive = currentStep === step.id;
         const isComplete = currentStep > step.id;
+        const isClickable = step.id <= currentStep;
 
         return (
-          <div
+          <button
             key={step.id}
+            type="button"
+            onClick={() => {
+              if (isClickable) {
+                onStepChange(step.id);
+              }
+            }}
+            disabled={!isClickable}
             className={`rounded-xl border px-4 py-3 ${
               isActive
                 ? "border-indigo-200 bg-indigo-50"
@@ -494,7 +532,7 @@ function PlannerStepper({ currentStep }) {
               Step {step.id}
             </p>
             <p className={`mt-1 text-sm font-semibold ${isActive || isComplete ? "text-gray-900" : "text-white"}`}>{step.label}</p>
-          </div>
+          </button>
         );
       })}
     </div>
@@ -522,10 +560,25 @@ function normalizeCompletedSessionSummary(session) {
   };
 }
 
+function normalizePlayerDirectoryEntry(player) {
+  if (!player?.player_id) return null;
+
+  return {
+    playerId: player.player_id,
+    fullName: player.full_name,
+    shortName: player.short_name,
+    source: player.source || "manual",
+    createdAt: player.created_at || null,
+  };
+}
+
 function normalizePlayerSummary(player) {
   if (!player?.player_name) return null;
 
   return {
+    playerId: player.player_id || null,
+    fullName: player.full_name || player.player_name,
+    shortName: player.short_name || player.player_name,
     playerName: player.player_name,
     sessionsPlayed: player.sessions_played,
     matchesPlayed: player.matches_played,
@@ -559,6 +612,9 @@ function normalizePlayerDetail(detail) {
     ...normalizePlayerSummary(detail),
     topPartners: Array.isArray(detail.top_partners)
       ? detail.top_partners.map((partner) => ({
+          partnerId: partner.partner_id || null,
+          fullName: partner.full_name || partner.partner_name,
+          shortName: partner.short_name || partner.partner_name,
           partnerName: partner.partner_name,
           matchesPlayed: partner.matches_played,
           wins: partner.wins,
@@ -569,15 +625,17 @@ function normalizePlayerDetail(detail) {
 }
 
 export default function App() {
-  const plannerState = readStorage(PLANNER_STORAGE_KEY, null);
-  const savedSession = readStorage(SESSION_STORAGE_KEY, null);
-  const savedSessionAccess = readStorage(SESSION_ACCESS_STORAGE_KEY, {});
-  const initialView = readStorage(VIEW_STORAGE_KEY, "planner");
+  const plannerState = useRef(readStorage(PLANNER_STORAGE_KEY, null)).current;
+  const savedSession = useRef(readStorage(SESSION_STORAGE_KEY, null)).current;
+  const savedSessionAccess = useRef(readStorage(SESSION_ACCESS_STORAGE_KEY, {})).current;
+  const initialView = useRef(readStorage(VIEW_STORAGE_KEY, "planner")).current;
 
-  const [players, setPlayers] = useState(plannerState?.players || DEFAULT_PLAYERS);
-  const [fixedPairs, setFixedPairs] = useState(plannerState?.fixedPairs || DEFAULT_PAIRS);
+  const [directoryPlayers, setDirectoryPlayers] = useState([]);
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState(plannerState?.selectedPlayerIds || []);
+  const [fixedPairIds, setFixedPairIds] = useState(plannerState?.fixedPairIds || []);
   const [config, setConfig] = useState(normalizeConfig(plannerState?.config));
   const [roster, setRoster] = useState(plannerState?.roster || null);
+  const [rosterSignature, setRosterSignature] = useState(plannerState?.rosterSignature || null);
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [sessionElapsed, setSessionElapsed] = useState(0);
@@ -598,6 +656,9 @@ export default function App() {
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [playerStatsDetail, setPlayerStatsDetail] = useState(null);
   const [playerStatsDetailLoading, setPlayerStatsDetailLoading] = useState(false);
+  const [playersLoading, setPlayersLoading] = useState(false);
+  const [createPlayerLoading, setCreatePlayerLoading] = useState(false);
+  const [playerManagementError, setPlayerManagementError] = useState(null);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionLoadingLabel, setSessionLoadingLabel] = useState("Syncing shared session...");
   const [sessionsLoadingLabel, setSessionsLoadingLabel] = useState("Refreshing sessions...");
@@ -613,6 +674,22 @@ export default function App() {
   const scoreMutationQueueRef = useRef(Promise.resolve());
   const lastLocalEditAtRef = useRef(0);
   const previousNonScoringViewRef = useRef(initialView === "scoring" ? "sessions" : initialView);
+
+  const playersById = new Map(directoryPlayers.map((player) => [player.playerId, player]));
+  const selectedPlayers = selectedPlayerIds
+    .map((playerId) => playersById.get(playerId))
+    .filter(Boolean);
+  const selectedPlayerShortNames = selectedPlayers.map((player) => player.shortName);
+  const fixedPairs = fixedPairIds
+    .map(([firstId, secondId]) => {
+      const firstPlayer = playersById.get(firstId);
+      const secondPlayer = playersById.get(secondId);
+      if (!firstPlayer || !secondPlayer) return null;
+      return [firstPlayer.shortName, secondPlayer.shortName].sort();
+    })
+    .filter(Boolean);
+  const plannerRosterSignature = getPlannerRosterSignature(selectedPlayerIds, fixedPairIds, config, directoryPlayers);
+  const isRosterStale = Boolean(roster && rosterSignature && rosterSignature !== plannerRosterSignature);
 
   useEffect(() => {
     if (loading) {
@@ -635,8 +712,8 @@ export default function App() {
   }, [sessionLoading, sessionsLoading]);
 
   useEffect(() => {
-    writeStorage(PLANNER_STORAGE_KEY, { players, fixedPairs, config, roster });
-  }, [players, fixedPairs, config, roster]);
+    writeStorage(PLANNER_STORAGE_KEY, { selectedPlayerIds, fixedPairIds, config, roster, rosterSignature });
+  }, [selectedPlayerIds, fixedPairIds, config, roster, rosterSignature]);
 
   useEffect(() => {
     if (currentSession) {
@@ -655,8 +732,72 @@ export default function App() {
   }, [view]);
 
   useEffect(() => {
+    loadPlayers();
+  }, []);
+
+  useEffect(() => {
     loadSessions();
   }, []);
+
+  useEffect(() => {
+    if (directoryPlayers.length === 0) return;
+
+    if ((!plannerState?.selectedPlayerIds || plannerState.selectedPlayerIds.length === 0) && Array.isArray(plannerState?.players)) {
+      const legacyIds = plannerState.players
+        .map((name) => directoryPlayers.find((player) => player.shortName === name || player.fullName === name)?.playerId)
+        .filter(Boolean);
+      if (legacyIds.length > 0 && selectedPlayerIds.length === 0) {
+        setSelectedPlayerIds(legacyIds);
+      }
+    }
+
+    if ((!plannerState?.fixedPairIds || plannerState.fixedPairIds.length === 0) && Array.isArray(plannerState?.fixedPairs)) {
+      const legacyPairIds = plannerState.fixedPairs
+        .map(([firstName, secondName]) => {
+          const firstId = directoryPlayers.find((player) => player.shortName === firstName || player.fullName === firstName)?.playerId;
+          const secondId = directoryPlayers.find((player) => player.shortName === secondName || player.fullName === secondName)?.playerId;
+          if (!firstId || !secondId) return null;
+          return [firstId, secondId].sort();
+        })
+        .filter(Boolean);
+      if (legacyPairIds.length > 0 && fixedPairIds.length === 0) {
+        setFixedPairIds(legacyPairIds);
+      }
+    }
+  }, [directoryPlayers, fixedPairIds.length, plannerState, selectedPlayerIds.length]);
+
+  useEffect(() => {
+    const validSelectedIds = selectedPlayerIds.filter((playerId) => playersById.has(playerId));
+    if (validSelectedIds.length !== selectedPlayerIds.length) {
+      setSelectedPlayerIds(validSelectedIds);
+    }
+  }, [directoryPlayers, selectedPlayerIds]);
+
+  useEffect(() => {
+    const selectedIdSet = new Set(selectedPlayerIds);
+    const validPairs = fixedPairIds.filter(
+      ([firstId, secondId]) =>
+        selectedIdSet.has(firstId) &&
+        selectedIdSet.has(secondId) &&
+        firstId !== secondId
+    );
+    if (validPairs.length !== fixedPairIds.length) {
+      setFixedPairIds(validPairs);
+    }
+  }, [fixedPairIds, selectedPlayerIds]);
+
+  useEffect(() => {
+    const selectedShortNameSet = new Set(selectedPlayers.map((player) => player.shortName));
+    setConfig((current) => {
+      const nextLimits = Object.fromEntries(
+        Object.entries(current.limits || {}).filter(([playerName]) => selectedShortNameSet.has(playerName))
+      );
+      if (Object.keys(nextLimits).length === Object.keys(current.limits || {}).length) {
+        return current;
+      }
+      return { ...current, limits: nextLimits };
+    });
+  }, [selectedPlayers]);
 
   useEffect(() => {
     if (view === "sessions") {
@@ -759,13 +900,15 @@ export default function App() {
     setError(null);
     setGenerateError(null);
     try {
-      const result = await generateRoster(getLeagueRequestPayload(players, fixedPairs, config));
+      const result = await generateRoster(getLeagueRequestPayload(selectedPlayerShortNames, fixedPairs, config));
       setRoster(result);
+      setRosterSignature(plannerRosterSignature);
       setPlannerStep(3);
       setView("planner");
     } catch (e) {
       setGenerateError(e.message);
       setRoster(null);
+      setRosterSignature(null);
       window.setTimeout(() => {
         reviewStepRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 0);
@@ -805,6 +948,18 @@ export default function App() {
     }
   }
 
+  async function loadPlayers() {
+    setPlayersLoading(true);
+    try {
+      const list = await listPlayers();
+      setDirectoryPlayers(list.map(normalizePlayerDirectoryEntry).filter(Boolean));
+    } catch (e) {
+      setError((currentError) => currentError || e.message);
+    } finally {
+      setPlayersLoading(false);
+    }
+  }
+
   async function loadHistorySessions() {
     setHistoryLoading(true);
     try {
@@ -841,6 +996,25 @@ export default function App() {
     }
   }
 
+  async function handleCreatePlayer(payload) {
+    setCreatePlayerLoading(true);
+    setPlayerManagementError(null);
+    try {
+      const created = await createPlayer(payload);
+      const normalized = normalizePlayerDirectoryEntry(created);
+      setDirectoryPlayers((current) =>
+        [...current, normalized].sort((a, b) => a.fullName.localeCompare(b.fullName))
+      );
+      setError(null);
+      return normalized;
+    } catch (e) {
+      setPlayerManagementError(e.message);
+      return null;
+    } finally {
+      setCreatePlayerLoading(false);
+    }
+  }
+
   function refreshSupportingViews({ includeHistory = false, includePlayerStats = false } = {}) {
     void loadSessions();
     if (includeHistory) {
@@ -866,11 +1040,18 @@ export default function App() {
           league_meetings: config.league_meetings,
           knockout_qualifiers: config.knockout_qualifiers,
         },
+        selected_players: selectedPlayers.map((player) => ({
+          player_id: player.playerId,
+          full_name: player.fullName,
+          short_name: player.shortName,
+        })),
+        fixed_pair_player_ids: fixedPairIds,
       });
       const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
       setCurrentSession(normalized);
       setRoster(null);
+      setRosterSignature(null);
       setPlannerMode("generate");
       setPlannerStep(1);
       setSessionDraftName(createSessionName());
@@ -1181,11 +1362,12 @@ export default function App() {
     pushScoreUpdate(currentSession.sessionId, currentSession.editToken, stage, roundIndex, courtIndex, teamKey, rawValue);
   }
 
-  const canContinueFromPlayers = players.length >= 4;
+  const canContinueFromPlayers = selectedPlayerIds.length >= 4;
   const canContinueFromSettings = config.num_courts >= 1;
   const activeSessions = sessions.filter((session) => session.status !== "completed");
   const navItems = [
     { key: "planner", label: "Planner" },
+    { key: "players", label: "Players" },
     { key: "sessions", label: "Active Sessions" },
     { key: "history", label: "History" },
     { key: "player-stats", label: "Player Stats" },
@@ -1268,21 +1450,23 @@ export default function App() {
 
             <div className="space-y-6">
               <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <PlannerStepper currentStep={plannerStep} />
+                <PlannerStepper currentStep={plannerStep} onStepChange={setPlannerStep} />
               </section>
 
               {plannerStep === 1 ? (
                 <PlannerStepCard
                   step="Step 1"
                   title="Players and pairs"
-                  description="Add players and create any fixed pairs before moving on."
+                  description="Select players from the directory and set any fixed pairs before moving on."
                 >
                   <div className="space-y-6">
                     <PlayerInput
-                      players={players}
-                      setPlayers={setPlayers}
-                      fixedPairs={fixedPairs}
-                      setFixedPairs={setFixedPairs}
+                      availablePlayers={directoryPlayers}
+                      selectedPlayerIds={selectedPlayerIds}
+                      setSelectedPlayerIds={setSelectedPlayerIds}
+                      fixedPairIds={fixedPairIds}
+                      setFixedPairIds={setFixedPairIds}
+                      onOpenPlayerManagement={() => setView("players")}
                     />
                     <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
                       <button
@@ -1315,7 +1499,7 @@ export default function App() {
                     <ConfigPanel
                       config={config}
                       setConfig={setConfig}
-                      players={players}
+                      players={selectedPlayerShortNames}
                       fixedPairs={fixedPairs}
                     />
                     <div className="flex flex-col gap-3 sm:flex-row sm:justify-between">
@@ -1370,8 +1554,22 @@ export default function App() {
                             <p className="mt-1">{generateError}</p>
                           </div>
                         ) : null}
+                        {isRosterStale ? (
+                          <div className={`rounded-xl border px-4 py-3 text-sm ${
+                            roster ? "border-amber-300 bg-amber-50 text-amber-800" : "border-amber-200 bg-amber-50 text-amber-800"
+                          }`}>
+                            <p className="font-semibold">Roster is out of date</p>
+                            <p className="mt-1">
+                              Players, pairs, or settings changed after the last generation. Regenerate the roster before starting a session.
+                            </p>
+                          </div>
+                        ) : null}
                         <p className={`text-sm ${roster ? "text-slate-300" : "text-gray-600"}`}>
-                          {roster ? "The latest generated roster is ready to review below." : "Generate a roster to preview the rounds and courts here."}
+                          {roster
+                            ? isRosterStale
+                              ? "The roster preview below is from older inputs and needs to be regenerated."
+                              : "The latest generated roster is ready to review below."
+                            : "Generate a roster to preview the rounds and courts here."}
                         </p>
                         {roster ? (
                           <label className={`block text-sm font-medium ${roster ? "text-slate-100" : "text-gray-700"}`} htmlFor="session-draft-name">
@@ -1394,19 +1592,19 @@ export default function App() {
                           <button
                             type="button"
                             onClick={handleGenerate}
-                            disabled={loading || players.length < 4}
+                            disabled={loading || selectedPlayerIds.length < 4}
                             className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
                           >
-                            {roster ? "Regenerate Roster" : "Generate Roster"}
+                            {roster ? (isRosterStale ? "Regenerate Updated Roster" : "Regenerate Roster") : "Generate Roster"}
                           </button>
                           {roster ? <DownloadCSV data={roster} /> : null}
                           <button
                             type="button"
                             onClick={handleLockRoster}
-                            disabled={!roster || sessionLoading}
+                            disabled={!roster || isRosterStale || sessionLoading}
                             className="inline-flex min-h-11 items-center justify-center rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition-colors hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
                           >
-                            {sessionLoading ? "Creating Session..." : "Start Session"}
+                            {sessionLoading ? "Creating Session..." : isRosterStale ? "Regenerate To Start" : "Start Session"}
                           </button>
                         </div>
                         <div className="flex">
@@ -1431,6 +1629,21 @@ export default function App() {
               ) : null}
             </div>
           </div>
+        ) : view === "players" ? (
+          <PlayersPage
+            players={directoryPlayers.map((player) => ({
+              player_id: player.playerId,
+              full_name: player.fullName,
+              short_name: player.shortName,
+              source: player.source,
+              created_at: player.createdAt,
+            }))}
+            loading={playersLoading}
+            createLoading={createPlayerLoading}
+            error={playerManagementError}
+            onRefresh={loadPlayers}
+            onCreatePlayer={handleCreatePlayer}
+          />
         ) : view === "sessions" ? (
           <ActiveSessionsPage
             sessions={activeSessions}
@@ -1467,6 +1680,9 @@ export default function App() {
         ) : view === "player-stats" ? (
           <PlayerStatsPage
             players={playerStats.map((player) => ({
+              player_id: player.playerId,
+              full_name: player.fullName,
+              short_name: player.shortName,
               player_name: player.playerName,
               sessions_played: player.sessionsPlayed,
               matches_played: player.matchesPlayed,
@@ -1477,6 +1693,9 @@ export default function App() {
             playerDetail={
               playerStatsDetail
                 ? {
+                    player_id: playerStatsDetail.playerId,
+                    full_name: playerStatsDetail.fullName,
+                    short_name: playerStatsDetail.shortName,
                     player_name: playerStatsDetail.playerName,
                     sessions_played: playerStatsDetail.sessionsPlayed,
                     matches_played: playerStatsDetail.matchesPlayed,
@@ -1484,6 +1703,9 @@ export default function App() {
                     championships: playerStatsDetail.championships,
                     last_session_at: playerStatsDetail.lastSessionAt,
                     top_partners: playerStatsDetail.topPartners.map((partner) => ({
+                      partner_id: partner.partnerId,
+                      full_name: partner.fullName,
+                      short_name: partner.shortName,
                       partner_name: partner.partnerName,
                       matches_played: partner.matchesPlayed,
                       wins: partner.wins,

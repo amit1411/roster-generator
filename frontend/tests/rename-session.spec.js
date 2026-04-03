@@ -1,18 +1,11 @@
 import { expect, test } from "@playwright/test";
+import { createRoundRobinSession, openSession } from "./helpers/session";
 
-async function createSession(page) {
-  await page.goto("/");
+test("@smoke session can be renamed from scoring view and session list", async ({ page, request }) => {
+  const session = await createRoundRobinSession(request, "Rename Session Seed");
 
-  await page.getByRole("button", { name: "Next: Settings" }).click();
-  await page.getByRole("button", { name: "Next: Review" }).click();
-  await page.getByRole("button", { name: "Generate Roster", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Start Session" })).toBeVisible();
-  await page.getByRole("button", { name: "Start Session" }).click();
+  await openSession(page, session.session_id, session.edit_token);
   await expect(page.getByRole("button", { name: "Rename Session" })).toBeVisible();
-}
-
-test("@smoke session can be renamed from scoring view and session list", async ({ page }) => {
-  await createSession(page);
 
   await page.getByRole("button", { name: "Rename Session" }).click();
   await page.getByLabel("Session name").fill("Evening Ladder");
@@ -20,7 +13,7 @@ test("@smoke session can be renamed from scoring view and session list", async (
   await expect(page.getByText("Session Evening Ladder")).toBeVisible();
 
   await page.getByRole("button", { name: "Back to Roster" }).click();
-  await page.getByRole("button", { name: "Active Sessions" }).click();
+  await page.getByRole("button", { name: "Active Sessions", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Evening Ladder" }).first()).toBeVisible();
 
   await page.getByRole("button", { name: "Rename" }).first().click();

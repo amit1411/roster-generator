@@ -35,6 +35,18 @@ export async function createSharedSession(request, { name, roster, drawConfig })
   return response.json();
 }
 
+export async function createPlayer(request, { fullName, shortName }) {
+  const response = await request.post(`${API_BASE}/api/players`, {
+    data: {
+      full_name: fullName,
+      short_name: shortName,
+    },
+  });
+
+  expect(response.ok()).toBeTruthy();
+  return response.json();
+}
+
 export async function createRoundRobinSession(request, name = "Round Robin Smoke") {
   const roster = await generateRoster(request);
   return createSharedSession(request, {

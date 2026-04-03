@@ -78,7 +78,10 @@ export default function PlayerStatsPage({
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-gray-900">{player.player_name}</p>
+                      <p className="truncate text-sm font-semibold text-gray-900">{player.full_name || player.player_name}</p>
+                      {player.short_name && player.short_name !== (player.full_name || player.player_name) ? (
+                        <p className="mt-1 text-xs font-medium text-indigo-700">{player.short_name}</p>
+                      ) : null}
                       <p className="mt-1 text-xs text-gray-500">
                         {player.sessions_played} sessions • {player.matches_played} matches
                       </p>
@@ -107,7 +110,10 @@ export default function PlayerStatsPage({
             <>
               <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Profile</p>
-                <h3 className="mt-1 text-2xl font-bold text-gray-900">{playerDetail.player_name}</h3>
+                <h3 className="mt-1 text-2xl font-bold text-gray-900">{playerDetail.full_name || playerDetail.player_name}</h3>
+                {playerDetail.short_name && playerDetail.short_name !== (playerDetail.full_name || playerDetail.player_name) ? (
+                  <p className="mt-2 text-sm font-medium text-indigo-700">{playerDetail.short_name}</p>
+                ) : null}
                 <p className="mt-2 text-sm text-gray-600">
                   Last completed session: {playerDetail.last_session_at ? formatDate(playerDetail.last_session_at) : "No completed sessions yet"}
                 </p>
@@ -122,14 +128,17 @@ export default function PlayerStatsPage({
 
               <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Top Partners</p>
-                <h3 className="mt-1 text-lg font-semibold text-gray-900">Best-performing partners for {playerDetail.player_name}</h3>
+                <h3 className="mt-1 text-lg font-semibold text-gray-900">Best-performing partners for {playerDetail.full_name || playerDetail.player_name}</h3>
                 <div className="mt-4 space-y-3">
                   {playerDetail.top_partners.length > 0 ? (
                     playerDetail.top_partners.map((partner, index) => (
                       <div key={`${partner.partner_name}-${index}`} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div>
-                            <p className="text-sm font-semibold text-gray-900">{partner.partner_name}</p>
+                            <p className="text-sm font-semibold text-gray-900">{partner.full_name || partner.partner_name}</p>
+                            {partner.short_name && partner.short_name !== (partner.full_name || partner.partner_name) ? (
+                              <p className="mt-1 text-xs font-medium text-indigo-700">{partner.short_name}</p>
+                            ) : null}
                             <p className="mt-2 text-sm text-gray-600">
                               {partner.matches_played} matches together • {partner.wins} wins
                             </p>
