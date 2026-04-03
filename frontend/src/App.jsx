@@ -34,6 +34,7 @@ const PLANNER_STORAGE_KEY = "badminton-roster:planner";
 const SESSION_STORAGE_KEY = "badminton-roster:session";
 const SESSION_ACCESS_STORAGE_KEY = "badminton-roster:session-access";
 const VIEW_STORAGE_KEY = "badminton-roster:view";
+const ORGANIZER_TOKEN_STORAGE_KEY = "badminton-roster:organizer-token";
 const SESSION_POLL_INTERVAL_MS = 12000;
 const ACTIVE_EDIT_GRACE_MS = 15000;
 const PLAIN_SESSION_WAIT_LABELS = new Set([
@@ -458,6 +459,72 @@ function RenameSessionDialog({
   );
 }
 
+function OrganizerTokenDialog({
+  open,
+  loading,
+  value,
+  error,
+  onChange,
+  onCancel,
+  onSubmit,
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+      <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-5 shadow-xl">
+        <p className="text-sm font-semibold uppercase tracking-wide text-amber-600">Organizer Check</p>
+        <h3 className="mt-1 text-lg font-semibold text-gray-900">Enter organizer token to start a session</h3>
+        <p className="mt-2 text-sm text-gray-600">
+          This is a temporary safeguard until login exists. The token is remembered on this device so organizers do not need to re-enter it every time.
+        </p>
+        <form
+          className="mt-4 space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSubmit();
+          }}
+        >
+          <label className="block text-sm font-medium text-gray-700" htmlFor="organizer-token">
+            Organizer token
+            <input
+              id="organizer-token"
+              type="password"
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              disabled={loading}
+              placeholder="Enter ADMIN_RECOVERY_TOKEN"
+              className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 disabled:bg-gray-100"
+            />
+          </label>
+          {error ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {error}
+            </div>
+          ) : null}
+          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={loading}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !value.trim()}
+              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+            >
+              {loading ? "Checking..." : "Start Session"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function PlannerStepCard({ step, title, description, tone = "default", children }) {
   const tones = {
     default: "border-gray-200 bg-white",
@@ -632,6 +699,7 @@ export default function App() {
   const savedSession = useRef(readStorage(SESSION_STORAGE_KEY, null)).current;
   const savedSessionAccess = useRef(readStorage(SESSION_ACCESS_STORAGE_KEY, {})).current;
   const initialView = useRef(readStorage(VIEW_STORAGE_KEY, "planner")).current;
+  const savedOrganizerToken = useRef(readStorage(ORGANIZER_TOKEN_STORAGE_KEY, "")).current;
 
   const [directoryPlayers, setDirectoryPlayers] = useState([]);
   const [selectedPlayerIds, setSelectedPlayerIds] = useState(plannerState?.selectedPlayerIds || []);
@@ -672,6 +740,10 @@ export default function App() {
   const [renameValue, setRenameValue] = useState("");
   const [renameLoading, setRenameLoading] = useState(false);
   const [shareFeedback, setShareFeedback] = useState({ sessionId: null, text: "" });
+  const [organizerToken, setOrganizerToken] = useState(savedOrganizerToken || "");
+  const [organizerTokenDraft, setOrganizerTokenDraft] = useState(savedOrganizerToken || "");
+  const [organizerDialogOpen, setOrganizerDialogOpen] = useState(false);
+  const [organizerDialogError, setOrganizerDialogError] = useState(null);
   const timerRef = useRef(null);
   const sessionTimerRef = useRef(null);
   const reviewStepRef = useRef(null);
@@ -735,6 +807,10 @@ export default function App() {
   useEffect(() => {
     writeStorage(VIEW_STORAGE_KEY, view);
   }, [view]);
+
+  useEffect(() => {
+    writeStorage(ORGANIZER_TOKEN_STORAGE_KEY, organizerToken || "");
+  }, [organizerToken]);
 
   useEffect(() => {
     loadPlayers();
@@ -1073,7 +1149,7 @@ export default function App() {
     }
   }
 
-  async function handleLockRoster() {
+  async function handleCreateSessionWithToken(adminToken) {
     if (!roster) return;
 
     setSessionLoadingLabel("Creating session...");
@@ -1094,9 +1170,13 @@ export default function App() {
           short_name: player.shortName,
         })),
         fixed_pair_player_ids: fixedPairIds,
+        admin_token: adminToken,
       });
       const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
+      setOrganizerToken(adminToken);
+      setOrganizerDialogError(null);
+      setOrganizerDialogOpen(false);
       setCurrentSession(normalized);
       setRoster(null);
       setRosterSignature(null);
@@ -1107,11 +1187,40 @@ export default function App() {
       previousNonScoringViewRef.current = "sessions";
       setView("scoring");
       refreshSupportingViews();
+      return true;
     } catch (e) {
-      setError(e.message);
+      if (e.message === "Organizer token required to start a session") {
+        setOrganizerDialogError(e.message);
+        setOrganizerTokenDraft(adminToken);
+      } else {
+        setError(e.message);
+      }
+      return false;
     } finally {
       setSessionLoading(false);
     }
+  }
+
+  async function handleLockRoster() {
+    if (!roster) return;
+
+    if (!organizerToken.trim()) {
+      setOrganizerDialogError(null);
+      setOrganizerTokenDraft(organizerToken);
+      setOrganizerDialogOpen(true);
+      return;
+    }
+
+    const started = await handleCreateSessionWithToken(organizerToken.trim());
+    if (!started) {
+      setOrganizerDialogOpen(true);
+    }
+  }
+
+  async function handleOrganizerDialogSubmit() {
+    const nextToken = organizerTokenDraft.trim();
+    if (!nextToken) return;
+    await handleCreateSessionWithToken(nextToken);
   }
 
   async function openSession(sessionId) {
@@ -1467,6 +1576,26 @@ export default function App() {
       ) : null}
 
       <main className="max-w-7xl mx-auto px-4 py-6">
+        <OrganizerTokenDialog
+          open={organizerDialogOpen}
+          loading={sessionLoading}
+          value={organizerTokenDraft}
+          error={organizerDialogError}
+          onChange={(value) => {
+            setOrganizerTokenDraft(value);
+            if (organizerDialogError) {
+              setOrganizerDialogError(null);
+            }
+          }}
+          onCancel={() => {
+            if (sessionLoading) return;
+            setOrganizerDialogOpen(false);
+            setOrganizerDialogError(null);
+            setOrganizerTokenDraft(organizerToken);
+          }}
+          onSubmit={handleOrganizerDialogSubmit}
+        />
+
         {error && (
           <div className="mb-6 bg-red-50 border border-red-200 rounded-lg p-4">
             <p className="text-sm text-red-700 font-medium">Error: {error}</p>

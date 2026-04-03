@@ -121,6 +121,7 @@ class SharedSessionCreateRequest(BaseModel):
     name: str | None = None
     selected_players: list[SessionPlayerReference] = []
     fixed_pair_player_ids: list[list[str]] = []
+    admin_token: str | None = None
 
 
 class SharedSessionResponse(BaseModel):
@@ -1599,6 +1600,9 @@ def api_generate(req: RosterRequest):
 
 @app.post("/api/sessions", response_model=SharedSessionResponse)
 def create_shared_session(req: SharedSessionCreateRequest):
+    if req.admin_token != ADMIN_RECOVERY_TOKEN:
+        raise HTTPException(status_code=403, detail="Organizer token required to start a session")
+
     payload = {
         "name": req.name or f"session-{secrets.token_hex(2)}",
         "edit_token": secrets.token_urlsafe(12),

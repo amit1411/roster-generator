@@ -85,6 +85,14 @@ These staging commands:
 - do not start local backend/frontend servers
 - point both page navigation and API-assisted setup to the Render app
 - are best run after the new code is deployed upstream
+- may need `PLAYWRIGHT_ADMIN_TOKEN` set if staging/prod uses a non-default organizer token for session creation
+
+Example:
+
+```bash
+cd frontend
+PLAYWRIGHT_ADMIN_TOKEN=your_staging_token npm run test:e2e:staging:smoke
+```
 
 Important staging caveat:
 - these tests create sessions, players, scores, and sometimes delete test-created data
@@ -166,6 +174,7 @@ npm run test:e2e:full
   - `PLAYWRIGHT_REMOTE=1`
   - `PLAYWRIGHT_BASE_URL=...`
   - `PLAYWRIGHT_API_BASE_URL=...`
+  - `PLAYWRIGHT_ADMIN_TOKEN=...` when the environment requires a non-default organizer token
 - Playwright is configured with `workers: 1`.
   - The current E2E setup shares one temporary SQLite-backed backend instance.
   - Running tests in parallel can cause cross-test interference and flaky failures.

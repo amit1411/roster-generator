@@ -1,6 +1,7 @@
 import { expect } from "@playwright/test";
 
 const API_BASE = process.env.PLAYWRIGHT_API_BASE_URL || "http://127.0.0.1:8010";
+const ADMIN_TOKEN = process.env.PLAYWRIGHT_ADMIN_TOKEN || "thisismytoken";
 
 export async function generateRoster(request, overrides = {}) {
   const payload = {
@@ -28,6 +29,7 @@ export async function createSharedSession(request, { name, roster, drawConfig })
       name,
       roster,
       draw_config: drawConfig,
+      admin_token: ADMIN_TOKEN,
     },
   });
 

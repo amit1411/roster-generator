@@ -23,7 +23,7 @@ test("player directory imports names from existing sessions", async ({ page, req
   await expect(page.locator("p").filter({ hasText: /^Legacy Two$/ })).toBeVisible();
 });
 
-test("players can be created and selected from the planner directory", async ({ page }) => {
+test("players can be created, selected from the planner directory, and used to start a protected session", async ({ page }) => {
   const players = [
     { fullName: "Player Alpha", shortName: "PA1" },
     { fullName: "Player Bravo", shortName: "PB1" },
@@ -61,4 +61,13 @@ test("players can be created and selected from the planner directory", async ({ 
 
   await expect(page.getByRole("heading", { name: "Roster" })).toBeVisible();
   await expect(page.locator("main")).toContainText("PA1");
+
+  await page.getByRole("button", { name: "Start Session" }).click();
+  const organizerDialog = page.locator("div.fixed.inset-0").filter({ hasText: "Enter organizer token to start a session" });
+  await expect(organizerDialog.getByRole("heading", { name: "Enter organizer token to start a session" })).toBeVisible();
+  await organizerDialog.getByPlaceholder("Enter ADMIN_RECOVERY_TOKEN").fill("thisismytoken");
+  await organizerDialog.getByRole("button", { name: "Start Session" }).click();
+
+  await expect(page.getByText("Scoring Console")).toBeVisible();
+  await expect(page.getByText(/Session /)).toBeVisible();
 });
