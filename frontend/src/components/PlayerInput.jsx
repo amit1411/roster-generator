@@ -146,7 +146,7 @@ export default function PlayerInput({
   return (
     <div className="space-y-6">
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
-        <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <section className="order-2 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm xl:order-1">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Session Players</h2>
@@ -231,7 +231,7 @@ export default function PlayerInput({
           </div>
         </section>
 
-        <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+        <section className="order-1 rounded-2xl border border-gray-200 bg-white p-5 shadow-sm xl:order-2">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">Player Directory</h2>

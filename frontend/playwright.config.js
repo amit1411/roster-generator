@@ -1,4 +1,4 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./tests",
@@ -21,6 +21,24 @@ export default defineConfig({
       cwd: ".",
       url: "http://127.0.0.1:4174",
       reuseExistingServer: false,
+    },
+  ],
+  projects: [
+    {
+      name: "desktop",
+      use: {},
+    },
+    {
+      name: "iphone",
+      use: {
+        ...devices["iPhone 13"],
+      },
+    },
+    {
+      name: "android",
+      use: {
+        ...devices["Pixel 7"],
+      },
     },
   ],
 });

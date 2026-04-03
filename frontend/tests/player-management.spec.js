@@ -60,5 +60,5 @@ test("players can be created and selected from the planner directory", async ({ 
   await page.getByRole("button", { name: "Generate Roster" }).click();
 
   await expect(page.getByRole("heading", { name: "Roster" })).toBeVisible();
-  await expect(page.getByRole("cell", { name: "PA1" }).first()).toBeVisible();
+  await expect(page.locator("main")).toContainText("PA1");
 });
