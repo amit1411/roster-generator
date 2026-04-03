@@ -1,6 +1,6 @@
 import { expect } from "@playwright/test";
 
-const API_BASE = "http://127.0.0.1:8010";
+const API_BASE = process.env.PLAYWRIGHT_API_BASE_URL || "http://127.0.0.1:8010";
 
 export async function generateRoster(request, overrides = {}) {
   const payload = {

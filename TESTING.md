@@ -41,12 +41,55 @@ cd frontend
 npm run test:e2e:full
 ```
 
+Mobile suite:
+
+```bash
+cd frontend
+npm run test:e2e:mobile
+```
+
 Run a specific test:
 
 ```bash
 cd frontend
 npm run test:e2e -- rename-session.spec.js
 ```
+
+## Staging E2E
+
+Playwright can also run against the staging deployment at:
+- `https://roster-generator-oibn.onrender.com/`
+
+Desktop staging run:
+
+```bash
+cd frontend
+npm run test:e2e:staging
+```
+
+Staging smoke run:
+
+```bash
+cd frontend
+npm run test:e2e:staging:smoke
+```
+
+Staging mobile run:
+
+```bash
+cd frontend
+npm run test:e2e:staging:mobile
+```
+
+These staging commands:
+- do not start local backend/frontend servers
+- point both page navigation and API-assisted setup to the Render app
+- are best run after the new code is deployed upstream
+
+Important staging caveat:
+- these tests create sessions, players, scores, and sometimes delete test-created data
+- this is real staging data, not the temporary local SQLite database
+- if you want a cleaner staging signal, prefer `test:e2e:staging:smoke` for routine checks
 
 ## Current E2E Coverage
 
@@ -119,6 +162,10 @@ npm run test:e2e:full
   - backend: `127.0.0.1:8010`
   - frontend: `127.0.0.1:4174`
   - This avoids accidentally reusing a local dev server on the default app ports.
+- Remote/staging runs are opt-in through environment-driven Playwright config.
+  - `PLAYWRIGHT_REMOTE=1`
+  - `PLAYWRIGHT_BASE_URL=...`
+  - `PLAYWRIGHT_API_BASE_URL=...`
 - Playwright is configured with `workers: 1`.
   - The current E2E setup shares one temporary SQLite-backed backend instance.
   - Running tests in parallel can cause cross-test interference and flaky failures.
