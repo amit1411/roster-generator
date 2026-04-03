@@ -43,6 +43,26 @@ export async function createPlayer(request, { fullName, shortName }) {
     },
   });
 
+  if (response.ok()) {
+    return response.json();
+  }
+
+  if (response.status() === 409) {
+    const playersResponse = await request.get(`${API_BASE}/api/players`);
+    expect(playersResponse.ok()).toBeTruthy();
+    const players = await playersResponse.json();
+    const normalizedFullName = fullName.trim().toLowerCase();
+    const normalizedShortName = shortName.trim().toLowerCase();
+    const existingPlayer = players.find((player) => {
+      return (
+        player.full_name.trim().toLowerCase() === normalizedFullName ||
+        player.short_name.trim().toLowerCase() === normalizedShortName
+      );
+    });
+    expect(existingPlayer).toBeTruthy();
+    return existingPlayer;
+  }
+
   expect(response.ok()).toBeTruthy();
   return response.json();
 }

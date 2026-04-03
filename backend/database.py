@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 
-from sqlalchemy import JSON, DateTime, Integer, String, create_engine, func, inspect, text
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, create_engine, func, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
@@ -64,6 +64,9 @@ class PlayerRecord(Base):
     short_name: Mapped[str] = mapped_column(String(60), nullable=False)
     normalized_full_name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     normalized_short_name: Mapped[str] = mapped_column(String(60), nullable=False, unique=True)
+    aliases: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    deleted_at: Mapped[str | None] = mapped_column(DateTime(timezone=True), nullable=True)
     source: Mapped[str] = mapped_column(String(24), nullable=False, default="manual")
     created_at: Mapped[str] = mapped_column(
         DateTime(timezone=True),
@@ -206,6 +209,9 @@ ANALYTICS_SCHEMA_UPDATES = {
         ("short_name", "VARCHAR(60)", "NOT NULL DEFAULT ''"),
         ("normalized_full_name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
         ("normalized_short_name", "VARCHAR(60)", "NOT NULL DEFAULT ''"),
+        ("aliases", "JSON", "NULL"),
+        ("is_deleted", "BOOLEAN", "NOT NULL DEFAULT FALSE"),
+        ("deleted_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
         ("source", "VARCHAR(24)", "NOT NULL DEFAULT 'manual'"),
         ("created_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
         ("updated_at", "TIMESTAMP WITH TIME ZONE", "NULL"),

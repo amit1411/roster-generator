@@ -8,10 +8,14 @@ import time
 from collections import defaultdict
 from copy import deepcopy
 
+from datetime import datetime, timezone
+
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import OperationalError
 
 from database import (
@@ -166,6 +170,7 @@ class PlayerResponse(BaseModel):
     full_name: str
     short_name: str
     source: str
+    aliases: list[str] = []
     created_at: str | None = None
 
 
@@ -285,6 +290,15 @@ class PlayerCreateRequest(BaseModel):
         return cleaned
 
 
+class PlayerUpdateRequest(PlayerCreateRequest):
+    pass
+
+
+class PlayerDeleteRequest(BaseModel):
+    admin_token: str
+    delete_history: bool = False
+
+
 def _create_empty_scores(rounds: list[RoundResult]) -> list[list[dict[str, int | str]]]:
     return [
         [
@@ -317,6 +331,7 @@ def _serialize_player(row: PlayerRecord) -> PlayerResponse:
         full_name=row.full_name,
         short_name=row.short_name,
         source=row.source,
+        aliases=[alias for alias in (row.aliases or []) if alias],
         created_at=row.created_at.isoformat() if row.created_at else None,
     )
 
@@ -330,11 +345,65 @@ def _create_player_record(db, full_name: str, short_name: str, *, source: str):
         short_name=short_name,
         normalized_full_name=normalized_full_name,
         normalized_short_name=normalized_short_name,
+        aliases=[],
+        is_deleted=False,
+        deleted_at=None,
         source=source,
     )
     db.add(player)
     db.flush()
     return player
+
+
+def _ensure_legacy_player_record(db, full_name: str, short_name: str):
+    normalized_full_name = _normalize_player_name(full_name)
+    normalized_short_name = _normalize_player_name(short_name)
+
+    existing_player = db.scalar(
+        select(PlayerRecord).where(
+            or_(
+                PlayerRecord.normalized_full_name == normalized_full_name,
+                PlayerRecord.normalized_short_name == normalized_short_name,
+            )
+        )
+    )
+    if existing_player:
+        return existing_player, False
+
+    values = {
+        "player_id": _generate_player_id(),
+        "full_name": full_name,
+        "short_name": short_name,
+        "normalized_full_name": normalized_full_name,
+        "normalized_short_name": normalized_short_name,
+        "aliases": [],
+        "is_deleted": False,
+        "deleted_at": None,
+        "source": "legacy",
+    }
+
+    dialect_name = db.bind.dialect.name if db.bind is not None else ""
+    if dialect_name == "postgresql":
+        statement = postgresql_insert(PlayerRecord).values(**values).on_conflict_do_nothing()
+        db.execute(statement)
+        db.flush()
+    elif dialect_name == "sqlite":
+        statement = sqlite_insert(PlayerRecord).values(**values).on_conflict_do_nothing()
+        db.execute(statement)
+        db.flush()
+    else:
+        player = _create_player_record(db, full_name, short_name, source="legacy")
+        return player, True
+
+    player = db.scalar(
+        select(PlayerRecord).where(
+            or_(
+                PlayerRecord.normalized_full_name == normalized_full_name,
+                PlayerRecord.normalized_short_name == normalized_short_name,
+            )
+        )
+    )
+    return player, bool(player and player.player_id == values["player_id"])
 
 
 def _iter_legacy_player_names(payload: dict):
@@ -358,8 +427,15 @@ def _iter_legacy_player_names(payload: dict):
 
 def _ensure_player_registry(db):
     existing_players = db.scalars(select(PlayerRecord).order_by(PlayerRecord.full_name.asc())).all()
+    active_players = [row for row in existing_players if not row.is_deleted]
     existing_full_names = {row.normalized_full_name for row in existing_players}
     existing_short_names = {row.normalized_short_name for row in existing_players}
+    existing_aliases = {
+        _normalize_player_name(alias)
+        for row in existing_players
+        for alias in (row.aliases or [])
+        if isinstance(alias, str) and alias.strip()
+    }
     discovered_names = set()
 
     session_records = db.scalars(select(SharedSessionRecord)).all()
@@ -390,21 +466,42 @@ def _ensure_player_registry(db):
         if cleaned:
             discovered_names.add(cleaned)
 
-    if not existing_players and not discovered_names:
+    if not active_players and not discovered_names:
         discovered_names.update(DEFAULT_PLAYER_DIRECTORY)
 
     changed = False
     for name in sorted(discovered_names):
         normalized = _normalize_player_name(name)
-        if normalized in existing_full_names or normalized in existing_short_names:
+        if normalized in existing_full_names or normalized in existing_short_names or normalized in existing_aliases:
             continue
-        player = _create_player_record(db, name, name, source="legacy")
+        player, created = _ensure_legacy_player_record(db, name, name)
+        if not player:
+            continue
         existing_full_names.add(player.normalized_full_name)
         existing_short_names.add(player.normalized_short_name)
-        changed = True
+        existing_aliases.update(
+            _normalize_player_name(alias)
+            for alias in (player.aliases or [])
+            if isinstance(alias, str) and alias.strip()
+        )
+        changed = changed or created
 
     if changed:
         db.flush()
+
+    for player in db.scalars(select(PlayerRecord)).all():
+        next_aliases = [
+            alias
+            for alias in dict.fromkeys(
+                alias
+                for alias in (player.aliases or [])
+                if isinstance(alias, str) and alias.strip()
+            )
+        ]
+        if next_aliases != (player.aliases or []):
+            player.aliases = next_aliases
+            db.add(player)
+            existing_aliases.update(_normalize_player_name(alias) for alias in next_aliases)
 
 
 def _find_player_by_name(db, name: str) -> PlayerRecord | None:
@@ -412,13 +509,76 @@ def _find_player_by_name(db, name: str) -> PlayerRecord | None:
     if not normalized:
         return None
     player = db.scalar(
-        select(PlayerRecord).where(PlayerRecord.normalized_short_name == normalized)
+        select(PlayerRecord).where(PlayerRecord.normalized_short_name == normalized, PlayerRecord.is_deleted.is_(False))
     )
     if player:
         return player
-    return db.scalar(
-        select(PlayerRecord).where(PlayerRecord.normalized_full_name == normalized)
+    player = db.scalar(
+        select(PlayerRecord).where(PlayerRecord.normalized_full_name == normalized, PlayerRecord.is_deleted.is_(False))
     )
+    if player:
+        return player
+
+    for candidate in db.scalars(select(PlayerRecord).where(PlayerRecord.is_deleted.is_(False))).all():
+        aliases = {_normalize_player_name(alias) for alias in (candidate.aliases or []) if alias}
+        if normalized in aliases:
+            return candidate
+    return None
+
+
+def _player_uses_name(player: PlayerRecord, normalized_name: str) -> bool:
+    if player.normalized_full_name == normalized_name or player.normalized_short_name == normalized_name:
+        return True
+    return normalized_name in {
+        _normalize_player_name(alias)
+        for alias in (player.aliases or [])
+        if isinstance(alias, str) and alias.strip()
+    }
+
+
+def _find_name_conflict(db, normalized_name: str, exclude_player_id: str | None = None) -> PlayerRecord | None:
+    for player in db.scalars(select(PlayerRecord)).all():
+        if exclude_player_id and player.player_id == exclude_player_id:
+            continue
+        if _player_uses_name(player, normalized_name):
+            return player
+    return None
+
+
+def _player_related_names(player: PlayerRecord) -> list[str]:
+    names = []
+    for value in [player.full_name, player.short_name, *(player.aliases or [])]:
+        cleaned = " ".join(str(value).strip().split())
+        if cleaned and cleaned not in names:
+            names.append(cleaned)
+    return names
+
+
+def _delete_player_history(db, player: PlayerRecord):
+    related_names = _player_related_names(player)
+    if not related_names:
+        return
+
+    for row in db.scalars(
+        select(PlayerSessionStatsRecord).where(PlayerSessionStatsRecord.player_name.in_(related_names))
+    ).all():
+        db.delete(row)
+
+    for row in db.scalars(
+        select(PlayerPartnerSessionStatsRecord).where(
+            (PlayerPartnerSessionStatsRecord.player_name.in_(related_names)) |
+            (PlayerPartnerSessionStatsRecord.partner_name.in_(related_names))
+        )
+    ).all():
+        db.delete(row)
+
+    for row in db.scalars(
+        select(PlayerStatsSummaryRecord).where(PlayerStatsSummaryRecord.player_name.in_(related_names))
+    ).all():
+        db.delete(row)
+
+    db.flush()
+    _rebuild_player_stats_summary(db)
 
 
 def _upgrade_session_payload(payload: dict) -> dict:
@@ -1489,7 +1649,11 @@ def list_shared_sessions():
 def list_players():
     with get_db_session() as db:
         _ensure_player_registry(db)
-        rows = db.scalars(select(PlayerRecord).order_by(PlayerRecord.full_name.asc())).all()
+        rows = db.scalars(
+            select(PlayerRecord)
+            .where(PlayerRecord.is_deleted.is_(False))
+            .order_by(PlayerRecord.full_name.asc())
+        ).all()
         return [_serialize_player(row) for row in rows]
 
 
@@ -1500,20 +1664,74 @@ def create_player(req: PlayerCreateRequest):
         normalized_full_name = _normalize_player_name(req.full_name)
         normalized_short_name = _normalize_player_name(req.short_name)
 
-        existing_full = db.scalar(
-            select(PlayerRecord).where(PlayerRecord.normalized_full_name == normalized_full_name)
-        )
+        existing_full = _find_name_conflict(db, normalized_full_name)
         if existing_full:
             raise HTTPException(status_code=409, detail="A player with this full name already exists")
 
-        existing_short = db.scalar(
-            select(PlayerRecord).where(PlayerRecord.normalized_short_name == normalized_short_name)
-        )
+        existing_short = _find_name_conflict(db, normalized_short_name)
         if existing_short:
             raise HTTPException(status_code=409, detail="A player with this short name already exists")
 
         player = _create_player_record(db, req.full_name, req.short_name, source="manual")
         return _serialize_player(player)
+
+
+@app.patch("/api/players/{player_id}", response_model=PlayerResponse)
+def update_player(player_id: str, req: PlayerUpdateRequest):
+    with get_db_session() as db:
+        _ensure_player_registry(db)
+        player = db.get(PlayerRecord, player_id)
+        if not player or player.is_deleted:
+            raise HTTPException(status_code=404, detail="Player not found")
+
+        normalized_full_name = _normalize_player_name(req.full_name)
+        normalized_short_name = _normalize_player_name(req.short_name)
+
+        existing_full = _find_name_conflict(db, normalized_full_name, exclude_player_id=player_id)
+        if existing_full:
+            raise HTTPException(status_code=409, detail="A player with this full name already exists")
+
+        existing_short = _find_name_conflict(db, normalized_short_name, exclude_player_id=player_id)
+        if existing_short:
+            raise HTTPException(status_code=409, detail="A player with this short name already exists")
+
+        alias_pool = []
+        for value in (player.full_name, player.short_name, *(player.aliases or [])):
+            cleaned = " ".join(str(value).strip().split())
+            normalized_value = _normalize_player_name(cleaned)
+            if not cleaned or normalized_value in {normalized_full_name, normalized_short_name}:
+                continue
+            alias_pool.append(cleaned)
+
+        player.full_name = req.full_name
+        player.short_name = req.short_name
+        player.normalized_full_name = normalized_full_name
+        player.normalized_short_name = normalized_short_name
+        player.aliases = list(dict.fromkeys(alias_pool))
+        db.add(player)
+        db.flush()
+        db.refresh(player)
+        return _serialize_player(player)
+
+
+@app.post("/api/players/{player_id}/delete", status_code=204)
+def delete_player(player_id: str, req: PlayerDeleteRequest):
+    with get_db_session() as db:
+        _ensure_player_registry(db)
+        player = db.get(PlayerRecord, player_id)
+        if not player or player.is_deleted:
+            raise HTTPException(status_code=404, detail="Player not found")
+        if req.admin_token != ADMIN_RECOVERY_TOKEN:
+            raise HTTPException(status_code=403, detail="Invalid admin token")
+
+        if req.delete_history:
+            _delete_player_history(db, player)
+
+        player.is_deleted = True
+        player.deleted_at = datetime.now(timezone.utc)
+        db.add(player)
+
+    return Response(status_code=204)
 
 
 @app.get("/api/history/sessions", response_model=list[CompletedSessionStatsResponse])

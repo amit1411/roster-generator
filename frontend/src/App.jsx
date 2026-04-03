@@ -12,6 +12,7 @@ import {
   batchUpdateSharedScores,
   createPlayer,
   createSharedSession,
+  deletePlayer,
   deleteSharedSession,
   editSharedRound,
   endSharedRound,
@@ -24,6 +25,7 @@ import {
   renameSharedSession,
   listSharedSessions,
   startSharedRound,
+  updatePlayer,
   updateSharedScore,
 } from "./api";
 import { buildKnockoutRounds, createScoresForRounds } from "./scoring";
@@ -568,6 +570,7 @@ function normalizePlayerDirectoryEntry(player) {
     fullName: player.full_name,
     shortName: player.short_name,
     source: player.source || "manual",
+    aliases: Array.isArray(player.aliases) ? player.aliases : [],
     createdAt: player.created_at || null,
   };
 }
@@ -658,6 +661,8 @@ export default function App() {
   const [playerStatsDetailLoading, setPlayerStatsDetailLoading] = useState(false);
   const [playersLoading, setPlayersLoading] = useState(false);
   const [createPlayerLoading, setCreatePlayerLoading] = useState(false);
+  const [updatePlayerLoading, setUpdatePlayerLoading] = useState(false);
+  const [deletePlayerLoading, setDeletePlayerLoading] = useState(false);
   const [playerManagementError, setPlayerManagementError] = useState(null);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionLoadingLabel, setSessionLoadingLabel] = useState("Syncing shared session...");
@@ -1012,6 +1017,49 @@ export default function App() {
       return null;
     } finally {
       setCreatePlayerLoading(false);
+    }
+  }
+
+  async function handleUpdatePlayer(playerId, payload) {
+    setUpdatePlayerLoading(true);
+    setPlayerManagementError(null);
+    try {
+      const updated = await updatePlayer(playerId, payload);
+      const normalized = normalizePlayerDirectoryEntry(updated);
+      setDirectoryPlayers((current) =>
+        current
+          .map((player) => (player.playerId === playerId ? normalized : player))
+          .sort((a, b) => a.fullName.localeCompare(b.fullName))
+      );
+      setError(null);
+      void loadPlayerStats();
+      return normalized;
+    } catch (e) {
+      setPlayerManagementError(e.message);
+      return null;
+    } finally {
+      setUpdatePlayerLoading(false);
+    }
+  }
+
+  async function handleDeletePlayer(playerId, payload) {
+    setDeletePlayerLoading(true);
+    setPlayerManagementError(null);
+    try {
+      await deletePlayer(playerId, payload);
+      setDirectoryPlayers((current) => current.filter((player) => player.playerId !== playerId));
+      setSelectedPlayerIds((current) => current.filter((value) => value !== playerId));
+      setFixedPairIds((current) =>
+        current.filter(([firstId, secondId]) => firstId !== playerId && secondId !== playerId)
+      );
+      void loadPlayerStats();
+      setError(null);
+      return true;
+    } catch (e) {
+      setPlayerManagementError(e.message);
+      return false;
+    } finally {
+      setDeletePlayerLoading(false);
     }
   }
 
@@ -1636,13 +1684,18 @@ export default function App() {
               full_name: player.fullName,
               short_name: player.shortName,
               source: player.source,
+              aliases: player.aliases,
               created_at: player.createdAt,
             }))}
             loading={playersLoading}
             createLoading={createPlayerLoading}
+            updateLoading={updatePlayerLoading}
+            deleteLoading={deletePlayerLoading}
             error={playerManagementError}
             onRefresh={loadPlayers}
             onCreatePlayer={handleCreatePlayer}
+            onUpdatePlayer={handleUpdatePlayer}
+            onDeletePlayer={handleDeletePlayer}
           />
         ) : view === "sessions" ? (
           <ActiveSessionsPage

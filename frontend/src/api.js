@@ -151,6 +151,29 @@ export async function createPlayer(payload) {
   return readJson(res);
 }
 
+export async function updatePlayer(playerId, payload) {
+  const res = await fetch(`${API_BASE}/api/players/${encodeURIComponent(playerId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  return readJson(res);
+}
+
+export async function deletePlayer(playerId, payload) {
+  const res = await fetch(`${API_BASE}/api/players/${encodeURIComponent(playerId)}/delete`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Server error" }));
+    throw new Error(err.detail || `HTTP ${res.status}`);
+  }
+}
+
 export async function listPlayerStats() {
   const res = await fetch(`${API_BASE}/api/stats/players`);
   return readJson(res);
