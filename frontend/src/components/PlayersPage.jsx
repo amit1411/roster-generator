@@ -1,5 +1,33 @@
 import { useState } from "react";
 
+function PlayerEditorFields({ draft, setDraft }) {
+  return (
+    <>
+      <label className="block text-sm font-medium text-gray-700">
+        Full Name
+        <input
+          type="text"
+          value={draft.fullName}
+          onChange={(event) => setDraft((current) => ({ ...current, fullName: event.target.value }))}
+          placeholder="Arijit Mukherjee"
+          className="mt-2 block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-500"
+        />
+      </label>
+
+      <label className="block text-sm font-medium text-gray-700">
+        Short Name
+        <input
+          type="text"
+          value={draft.shortName}
+          onChange={(event) => setDraft((current) => ({ ...current, shortName: event.target.value }))}
+          placeholder="Arijit"
+          className="mt-2 block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-500"
+        />
+      </label>
+    </>
+  );
+}
+
 function PlayerEditor({ title, submitLabel, draft, setDraft, loading, error, onSubmit, onCancel }) {
   return (
     <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -18,27 +46,7 @@ function PlayerEditor({ title, submitLabel, draft, setDraft, loading, error, onS
           onSubmit();
         }}
       >
-        <label className="block text-sm font-medium text-gray-700">
-          Full Name
-          <input
-            type="text"
-            value={draft.fullName}
-            onChange={(event) => setDraft((current) => ({ ...current, fullName: event.target.value }))}
-            placeholder="Arijit Mukherjee"
-            className="mt-2 block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-500"
-          />
-        </label>
-
-        <label className="block text-sm font-medium text-gray-700">
-          Short Name
-          <input
-            type="text"
-            value={draft.shortName}
-            onChange={(event) => setDraft((current) => ({ ...current, shortName: event.target.value }))}
-            placeholder="Arijit"
-            className="mt-2 block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-500"
-          />
-        </label>
+        <PlayerEditorFields draft={draft} setDraft={setDraft} />
 
         {error ? (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -66,6 +74,56 @@ function PlayerEditor({ title, submitLabel, draft, setDraft, loading, error, onS
           ) : null}
         </div>
       </form>
+    </div>
+  );
+}
+
+function EditPlayerDialog({ player, open, loading, error, draft, setDraft, onCancel, onConfirm }) {
+  if (!open || !player) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
+      <div className="w-full max-w-lg rounded-2xl border border-cyan-200 bg-white p-5 shadow-xl">
+        <p className="text-sm font-semibold uppercase tracking-wide text-cyan-600">Edit Player</p>
+        <h3 className="mt-1 text-xl font-semibold text-gray-900">Update player details</h3>
+        <p className="mt-2 text-sm text-gray-600">
+          This keeps the player ID stable while updating how the player appears in Planner, scoring, and the directory.
+        </p>
+
+        <form
+          className="mt-5 space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onConfirm();
+          }}
+        >
+          <PlayerEditorFields draft={draft} setDraft={setDraft} />
+
+          {error ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              {error}
+            </div>
+          ) : null}
+
+          <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={loading}
+              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={loading || !draft.fullName.trim() || !draft.shortName.trim()}
+              className="inline-flex min-h-11 items-center justify-center rounded-xl bg-cyan-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
+            >
+              {loading ? "Saving..." : "Save Changes"}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }
@@ -235,26 +293,9 @@ export default function PlayersPage({
             draft={draft}
             setDraft={setDraft}
             loading={createLoading}
-            error={editingPlayerId ? null : error}
+            error={error}
             onSubmit={submitCreate}
           />
-
-          {editingPlayerId ? (
-            <PlayerEditor
-              title="Edit Player"
-              submitLabel="Save Changes"
-              draft={editDraft}
-              setDraft={setEditDraft}
-              loading={updateLoading}
-              error={error}
-              onSubmit={submitEdit}
-              onCancel={() => {
-                if (updateLoading) return;
-                setEditingPlayerId(null);
-                setEditDraft({ fullName: "", shortName: "" });
-              }}
-            />
-          ) : null}
         </div>
 
         <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -326,6 +367,21 @@ export default function PlayersPage({
           </div>
         </section>
       </div>
+
+      <EditPlayerDialog
+        player={players.find((player) => player.player_id === editingPlayerId) ?? null}
+        open={Boolean(editingPlayerId)}
+        loading={updateLoading}
+        error={editingPlayerId ? error : null}
+        draft={editDraft}
+        setDraft={setEditDraft}
+        onCancel={() => {
+          if (updateLoading) return;
+          setEditingPlayerId(null);
+          setEditDraft({ fullName: "", shortName: "" });
+        }}
+        onConfirm={submitEdit}
+      />
 
       <DeletePlayerDialog
         player={deletingPlayer}
