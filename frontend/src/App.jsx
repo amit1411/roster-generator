@@ -1198,8 +1198,11 @@ export default function App() {
       const created = await createPlayer(payload);
       const normalized = normalizePlayerDirectoryEntry(created);
       setDirectoryPlayers((current) =>
-        [...current, normalized].sort((a, b) => a.fullName.localeCompare(b.fullName))
+        [...current.filter((player) => player.playerId !== normalized.playerId), normalized]
+          .sort((a, b) => a.fullName.localeCompare(b.fullName))
       );
+      void loadPlayers();
+      void loadPlayerStats();
       setError(null);
       return normalized;
     } catch (e) {
@@ -1242,6 +1245,7 @@ export default function App() {
       setFixedPairIds((current) =>
         current.filter(([firstId, secondId]) => firstId !== playerId && secondId !== playerId)
       );
+      void loadPlayers();
       void loadPlayerStats();
       setError(null);
       return true;

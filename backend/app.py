@@ -581,13 +581,65 @@ def _player_uses_name(player: PlayerRecord, normalized_name: str) -> bool:
     }
 
 
-def _find_name_conflict(db, normalized_name: str, exclude_player_id: str | None = None) -> PlayerRecord | None:
+def _find_name_conflict(
+    db,
+    normalized_name: str,
+    exclude_player_id: str | None = None,
+    *,
+    include_deleted: bool = False,
+) -> PlayerRecord | None:
     for player in db.scalars(select(PlayerRecord)).all():
         if exclude_player_id and player.player_id == exclude_player_id:
+            continue
+        if player.is_deleted and not include_deleted:
             continue
         if _player_uses_name(player, normalized_name):
             return player
     return None
+
+
+def _find_soft_deleted_player_for_restore(db, normalized_full_name: str, normalized_short_name: str) -> PlayerRecord | None:
+    matches = []
+    for player in db.scalars(select(PlayerRecord).where(PlayerRecord.is_deleted.is_(True))).all():
+        if _player_uses_name(player, normalized_full_name) or _player_uses_name(player, normalized_short_name):
+            matches.append(player)
+
+    if not matches:
+        return None
+
+    unique_matches = {player.player_id: player for player in matches}
+    if len(unique_matches) > 1:
+        raise HTTPException(
+            status_code=409,
+            detail="Multiple deleted players match this name. Edit an existing player instead of creating a new one.",
+        )
+
+    return next(iter(unique_matches.values()))
+
+
+def _restore_deleted_player(db, player: PlayerRecord, full_name: str, short_name: str) -> PlayerRecord:
+    normalized_full_name = _normalize_player_name(full_name)
+    normalized_short_name = _normalize_player_name(short_name)
+
+    alias_pool = []
+    for value in (player.full_name, player.short_name, *(player.aliases or [])):
+        cleaned = " ".join(str(value).strip().split())
+        normalized_value = _normalize_player_name(cleaned)
+        if not cleaned or normalized_value in {normalized_full_name, normalized_short_name}:
+            continue
+        alias_pool.append(cleaned)
+
+    player.full_name = full_name
+    player.short_name = short_name
+    player.normalized_full_name = normalized_full_name
+    player.normalized_short_name = normalized_short_name
+    player.aliases = list(dict.fromkeys(alias_pool))
+    player.is_deleted = False
+    player.deleted_at = None
+    db.add(player)
+    db.flush()
+    db.refresh(player)
+    return player
 
 
 def _player_related_names(player: PlayerRecord) -> list[str]:
@@ -1757,7 +1809,11 @@ def create_player(req: PlayerCreateRequest):
         if existing_short:
             raise HTTPException(status_code=409, detail="A player with this short name already exists")
 
-        player = _create_player_record(db, req.full_name, req.short_name, source="manual")
+        soft_deleted_player = _find_soft_deleted_player_for_restore(db, normalized_full_name, normalized_short_name)
+        if soft_deleted_player:
+            player = _restore_deleted_player(db, soft_deleted_player, req.full_name, req.short_name)
+        else:
+            player = _create_player_record(db, req.full_name, req.short_name, source="manual")
         response = _serialize_player(player)
         _invalidate_player_views()
         return response
