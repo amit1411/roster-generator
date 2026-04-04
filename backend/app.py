@@ -5,12 +5,15 @@ from __future__ import annotations
 import os
 import secrets
 import time
+import hashlib
+import json
 from collections import defaultdict
 from copy import deepcopy
 
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Response
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
 from sqlalchemy import delete, or_, select
@@ -18,6 +21,11 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import OperationalError
 
+from env import load_local_env
+
+load_local_env()
+
+from cache import cache
 from database import (
     CompletedSessionStatsRecord,
     PlayerRecord,
@@ -52,8 +60,44 @@ app.add_middleware(
 @app.on_event("startup")
 def startup():
     init_db()
+    cache.initialize()
     with get_db_session() as db:
         _ensure_player_registry(db)
+
+
+def _cache_ttl(name: str, default_seconds: int) -> int:
+    return cache.ttl(name, default_seconds)
+
+
+def _cache_get_or_set(namespace: str, key_parts: list[str], ttl_seconds: int, builder):
+    cache_key = cache.build_key(namespace, *key_parts)
+    cached = cache.get_json(cache_key)
+    if cached is not None:
+        return cached
+
+    value = builder()
+    serialized = jsonable_encoder(value)
+    cache.set_json(cache_key, serialized, ttl_seconds=ttl_seconds)
+    return serialized
+
+
+def _cache_token_key(token: str | None) -> str:
+    if not token:
+        return "anon"
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:12]
+
+
+def _invalidate_session_views(session_id: str, include_analytics: bool = True):
+    cache.bump("sessions")
+    cache.bump(f"session:{session_id}")
+    if include_analytics:
+        cache.bump("history")
+        cache.bump("player-stats")
+
+
+def _invalidate_player_views():
+    cache.bump("players")
+    cache.bump("player-stats")
 
 
 class RosterRequest(BaseModel):
@@ -1528,11 +1572,13 @@ def _update_session_record(session_id: str, updater, edit_token: str | None = No
                 db.flush()
                 db.refresh(record)
                 _sync_completed_session_stats(db, record, next_payload)
-                return (
+                response = (
                     response_builder(record, db)
                     if response_builder
                     else _serialize_session(record, edit_token=edit_token, db=db)
                 )
+                _invalidate_session_views(session_id)
+                return response
         except OperationalError as exc:
             message = str(exc).lower()
             if "statement timeout" not in message or attempt == 2:
@@ -1550,51 +1596,63 @@ def _restore_undo_snapshot(payload: dict, snapshot: dict):
 
 @app.post("/api/generate", response_model=RosterResponse)
 def api_generate(req: RosterRequest):
-    fixed_pairs = [tuple(sorted(p)) for p in req.fixed_pairs]
+    request_fingerprint = hashlib.sha256(
+        json.dumps(req.model_dump(), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
 
-    court_numbers = req.court_numbers
-    if not court_numbers or len(court_numbers) != req.num_courts:
-        court_numbers = [str(i + 1) for i in range(req.num_courts)]
+    def build_response():
+        fixed_pairs = [tuple(sorted(p)) for p in req.fixed_pairs]
 
-    try:
-        rounds, rest_counts, fpc, warnings = generate_roster(
-            players=req.players,
-            num_courts=req.num_courts,
-            num_rounds=req.rounds,
-            consecutive_limits=req.limits,
-            fixed_pairs=fixed_pairs,
-            pair_target=req.pair_games,
-            max_consecutive_rest=req.max_consecutive_rest,
-            pair_start_round=req.pair_start_round,
-            seed=req.seed,
+        court_numbers = req.court_numbers
+        if not court_numbers or len(court_numbers) != req.num_courts:
+            court_numbers = [str(i + 1) for i in range(req.num_courts)]
+
+        try:
+            rounds, rest_counts, fpc, warnings = generate_roster(
+                players=req.players,
+                num_courts=req.num_courts,
+                num_rounds=req.rounds,
+                consecutive_limits=req.limits,
+                fixed_pairs=fixed_pairs,
+                pair_target=req.pair_games,
+                max_consecutive_rest=req.max_consecutive_rest,
+                pair_start_round=req.pair_start_round,
+                seed=req.seed,
+            )
+        except RosterError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+
+        violations = validate_roster(
+            rounds, req.limits, req.max_consecutive_rest,
+            fixed_pairs, fpc, req.pair_games, req.pair_start_round,
         )
-    except RosterError as e:
-        raise HTTPException(status_code=422, detail=str(e))
 
-    violations = validate_roster(
-        rounds, req.limits, req.max_consecutive_rest,
-        fixed_pairs, fpc, req.pair_games, req.pair_start_round,
-    )
+        round_results = []
+        for r in rounds:
+            courts = [
+                CourtResult(team_a=list(ta), team_b=list(tb))
+                for ta, tb in r["courts"]
+            ]
+            round_results.append(RoundResult(
+                round=r["round"], courts=courts, resting=r["resting"],
+            ))
 
-    round_results = []
-    for r in rounds:
-        courts = [
-            CourtResult(team_a=list(ta), team_b=list(tb))
-            for ta, tb in r["courts"]
-        ]
-        round_results.append(RoundResult(
-            round=r["round"], courts=courts, resting=r["resting"],
-        ))
+        fpc_str = {f"{a} & {b}": count for (a, b), count in fpc.items()}
 
-    fpc_str = {f"{a} & {b}": count for (a, b), count in fpc.items()}
+        return RosterResponse(
+            rounds=round_results,
+            court_numbers=court_numbers,
+            rest_counts=rest_counts,
+            fixed_pair_counts=fpc_str,
+            violations=violations,
+            warnings=warnings,
+        )
 
-    return RosterResponse(
-        rounds=round_results,
-        court_numbers=court_numbers,
-        rest_counts=rest_counts,
-        fixed_pair_counts=fpc_str,
-        violations=violations,
-        warnings=warnings,
+    return _cache_get_or_set(
+        "roster",
+        [request_fingerprint],
+        _cache_ttl("CACHE_TTL_GENERATE", 3600),
+        build_response,
     )
 
 
@@ -1631,34 +1689,56 @@ def create_shared_session(req: SharedSessionCreateRequest):
         db.add(record)
         db.flush()
         db.refresh(record)
-        return _serialize_session(record, edit_token=payload["edit_token"], db=db)
+        response = _serialize_session(record, edit_token=payload["edit_token"], db=db)
+        _invalidate_session_views(session_id, include_analytics=False)
+        return response
 
 
 @app.get("/api/sessions/{session_id}", response_model=SharedSessionResponse)
 def get_shared_session(session_id: str, edit_token: str | None = None):
-    record = _get_session_record(session_id)
-    return _serialize_session(record, edit_token=edit_token)
+    return _cache_get_or_set(
+        f"session:{session_id}",
+        [_cache_token_key(edit_token)],
+        _cache_ttl("CACHE_TTL_SESSION_DETAIL", 15),
+        lambda: _serialize_session(_get_session_record(session_id), edit_token=edit_token),
+    )
 
 
 @app.get("/api/sessions", response_model=list[SharedSessionSummary])
 def list_shared_sessions():
-    with get_db_session() as db:
-        records = db.scalars(
-            select(SharedSessionRecord).order_by(SharedSessionRecord.updated_at.desc())
-        ).all()
-        return [_serialize_session_summary(record, db=db) for record in records]
+    def build_response():
+        with get_db_session() as db:
+            records = db.scalars(
+                select(SharedSessionRecord).order_by(SharedSessionRecord.updated_at.desc())
+            ).all()
+            return [_serialize_session_summary(record, db=db) for record in records]
+
+    return _cache_get_or_set(
+        "sessions",
+        ["all"],
+        _cache_ttl("CACHE_TTL_SESSIONS", 20),
+        build_response,
+    )
 
 
 @app.get("/api/players", response_model=list[PlayerResponse])
 def list_players():
-    with get_db_session() as db:
-        _ensure_player_registry(db)
-        rows = db.scalars(
-            select(PlayerRecord)
-            .where(PlayerRecord.is_deleted.is_(False))
-            .order_by(PlayerRecord.full_name.asc())
-        ).all()
-        return [_serialize_player(row) for row in rows]
+    def build_response():
+        with get_db_session() as db:
+            _ensure_player_registry(db)
+            rows = db.scalars(
+                select(PlayerRecord)
+                .where(PlayerRecord.is_deleted.is_(False))
+                .order_by(PlayerRecord.full_name.asc())
+            ).all()
+            return [_serialize_player(row) for row in rows]
+
+    return _cache_get_or_set(
+        "players",
+        ["all"],
+        _cache_ttl("CACHE_TTL_PLAYERS", 300),
+        build_response,
+    )
 
 
 @app.post("/api/players", response_model=PlayerResponse, status_code=201)
@@ -1677,7 +1757,9 @@ def create_player(req: PlayerCreateRequest):
             raise HTTPException(status_code=409, detail="A player with this short name already exists")
 
         player = _create_player_record(db, req.full_name, req.short_name, source="manual")
-        return _serialize_player(player)
+        response = _serialize_player(player)
+        _invalidate_player_views()
+        return response
 
 
 @app.patch("/api/players/{player_id}", response_model=PlayerResponse)
@@ -1715,7 +1797,9 @@ def update_player(player_id: str, req: PlayerUpdateRequest):
         db.add(player)
         db.flush()
         db.refresh(player)
-        return _serialize_player(player)
+        response = _serialize_player(player)
+        _invalidate_player_views()
+        return response
 
 
 @app.post("/api/players/{player_id}/delete", status_code=204)
@@ -1734,81 +1818,106 @@ def delete_player(player_id: str, req: PlayerDeleteRequest):
         player.is_deleted = True
         player.deleted_at = datetime.now(timezone.utc)
         db.add(player)
+        _invalidate_player_views()
 
     return Response(status_code=204)
 
 
 @app.get("/api/history/sessions", response_model=list[CompletedSessionStatsResponse])
 def list_completed_sessions():
-    with get_db_session() as db:
-        _ensure_player_registry(db)
-        _ensure_completed_session_stats(db)
-        rows = db.scalars(
-            select(CompletedSessionStatsRecord).order_by(CompletedSessionStatsRecord.completed_at.desc())
-        ).all()
-        return [_to_completed_session_stats_response(row) for row in rows]
+    def build_response():
+        with get_db_session() as db:
+            _ensure_player_registry(db)
+            _ensure_completed_session_stats(db)
+            rows = db.scalars(
+                select(CompletedSessionStatsRecord).order_by(CompletedSessionStatsRecord.completed_at.desc())
+            ).all()
+            return [_to_completed_session_stats_response(row) for row in rows]
+
+    return _cache_get_or_set(
+        "history",
+        ["completed"],
+        _cache_ttl("CACHE_TTL_HISTORY", 60),
+        build_response,
+    )
 
 
 @app.get("/api/stats/players", response_model=list[PlayerStatsSummaryResponse])
 def list_player_stats():
-    with get_db_session() as db:
-        _ensure_player_registry(db)
-        _ensure_completed_session_stats(db)
-        rows = db.scalars(
-            select(PlayerStatsSummaryRecord).order_by(
-                PlayerStatsSummaryRecord.championships.desc(),
-                PlayerStatsSummaryRecord.points.desc(),
-                PlayerStatsSummaryRecord.point_difference.desc(),
-                PlayerStatsSummaryRecord.wins.desc(),
-                PlayerStatsSummaryRecord.player_name.asc(),
-            )
-        ).all()
-        return [_to_player_stats_summary_response(db, row) for row in rows]
+    def build_response():
+        with get_db_session() as db:
+            _ensure_player_registry(db)
+            _ensure_completed_session_stats(db)
+            rows = db.scalars(
+                select(PlayerStatsSummaryRecord).order_by(
+                    PlayerStatsSummaryRecord.championships.desc(),
+                    PlayerStatsSummaryRecord.points.desc(),
+                    PlayerStatsSummaryRecord.point_difference.desc(),
+                    PlayerStatsSummaryRecord.wins.desc(),
+                    PlayerStatsSummaryRecord.player_name.asc(),
+                )
+            ).all()
+            return [_to_player_stats_summary_response(db, row) for row in rows]
+
+    return _cache_get_or_set(
+        "player-stats",
+        ["summary"],
+        _cache_ttl("CACHE_TTL_PLAYER_STATS", 60),
+        build_response,
+    )
 
 
 @app.get("/api/stats/players/{player_name}", response_model=PlayerStatsDetailResponse)
 def get_player_stats(player_name: str):
-    with get_db_session() as db:
-        _ensure_player_registry(db)
-        _ensure_completed_session_stats(db)
-        row = db.get(PlayerStatsSummaryRecord, player_name)
-        if not row:
-            raise HTTPException(status_code=404, detail="Player stats not found")
+    def build_response():
+        with get_db_session() as db:
+            _ensure_player_registry(db)
+            _ensure_completed_session_stats(db)
+            row = db.get(PlayerStatsSummaryRecord, player_name)
+            if not row:
+                raise HTTPException(status_code=404, detail="Player stats not found")
 
-        partner_rows = db.scalars(
-            select(PlayerPartnerSessionStatsRecord)
-            .where(PlayerPartnerSessionStatsRecord.player_name == player_name)
-        ).all()
+            partner_rows = db.scalars(
+                select(PlayerPartnerSessionStatsRecord)
+                .where(PlayerPartnerSessionStatsRecord.player_name == player_name)
+            ).all()
 
-        partner_totals = defaultdict(lambda: {"wins": 0, "matches": 0})
-        for partner_row in partner_rows:
-            partner_totals[partner_row.partner_name]["wins"] += partner_row.wins
-            partner_totals[partner_row.partner_name]["matches"] += partner_row.matches_played
+            partner_totals = defaultdict(lambda: {"wins": 0, "matches": 0})
+            for partner_row in partner_rows:
+                partner_totals[partner_row.partner_name]["wins"] += partner_row.wins
+                partner_totals[partner_row.partner_name]["matches"] += partner_row.matches_played
 
-        top_partners = sorted(
-            (
+            top_partners = sorted(
                 (
-                    lambda partner: {
-                        "partner_id": partner.player_id if partner else None,
-                        "full_name": partner.full_name if partner else partner_name,
-                        "short_name": partner.short_name if partner else partner_name,
-                        "partner_name": partner_name,
-                        "matches_played": totals["matches"],
-                        "wins": totals["wins"],
-                        "win_rate": round((totals["wins"] / totals["matches"]) * 100, 1) if totals["matches"] else 0.0,
-                    }
-                )(_find_player_by_name(db, partner_name))
-                for partner_name, totals in partner_totals.items()
-                if totals["matches"] > 0
-            ),
-            key=lambda item: (-item["win_rate"], -item["wins"], -item["matches_played"], item["partner_name"]),
-        )[:3]
+                    (
+                        lambda partner: {
+                            "partner_id": partner.player_id if partner else None,
+                            "full_name": partner.full_name if partner else partner_name,
+                            "short_name": partner.short_name if partner else partner_name,
+                            "partner_name": partner_name,
+                            "matches_played": totals["matches"],
+                            "wins": totals["wins"],
+                            "win_rate": round((totals["wins"] / totals["matches"]) * 100, 1) if totals["matches"] else 0.0,
+                        }
+                    )(_find_player_by_name(db, partner_name))
+                    for partner_name, totals in partner_totals.items()
+                    if totals["matches"] > 0
+                ),
+                key=lambda item: (-item["win_rate"], -item["wins"], -item["matches_played"], item["partner_name"]),
+            )[:3]
 
-        summary = _to_player_stats_summary_response(db, row)
-        return PlayerStatsDetailResponse(
-            **summary.model_dump(),
-            top_partners=[PartnerStatsResponse(**partner) for partner in top_partners],
-        )
+            summary = _to_player_stats_summary_response(db, row)
+            return PlayerStatsDetailResponse(
+                **summary.model_dump(),
+                top_partners=[PartnerStatsResponse(**partner) for partner in top_partners],
+            )
+
+    return _cache_get_or_set(
+        "player-stats",
+        ["detail", player_name],
+        _cache_ttl("CACHE_TTL_PLAYER_STATS", 60),
+        build_response,
+    )
 
 
 @app.delete("/api/sessions/{session_id}", status_code=204)
@@ -1838,6 +1947,7 @@ def delete_shared_session(session_id: str, edit_token: str | None = None):
             _delete_session_analytics(db, session_id)
             _rebuild_player_stats_summary(db)
         db.delete(record)
+        _invalidate_session_views(session_id, include_analytics=completion_state["completed"])
     return Response(status_code=204)
 
 

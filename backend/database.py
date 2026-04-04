@@ -8,6 +8,10 @@ from contextlib import contextmanager
 from sqlalchemy import JSON, Boolean, DateTime, Integer, String, create_engine, func, inspect, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
+from env import load_local_env
+
+load_local_env()
+
 
 def normalize_database_url(raw_url: str) -> str:
     """Force SQLAlchemy to use psycopg v3 for Postgres URLs."""

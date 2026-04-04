@@ -3,3 +3,5 @@ uvicorn[standard]
 gunicorn
 sqlalchemy
 psycopg[binary]
+redis
+python-dotenv
