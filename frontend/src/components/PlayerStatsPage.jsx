@@ -1,5 +1,3 @@
-import { useEffect, useRef } from "react";
-
 import { playerStatsPageCopy } from "../content/uiCopy";
 
 function MetricCard({ label, value, tone = "default" }) {
@@ -94,26 +92,151 @@ export default function PlayerStatsPage({
   onSelectPlayer,
   onRefresh,
 }) {
-  const detailSectionRef = useRef(null);
-  const shouldScrollToDetailRef = useRef(false);
+  const renderLeaderboard = () => (
+    <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{playerStatsPageCopy.leaderboard.eyebrow}</p>
+          <div className="mt-1 flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
+              <StatsIcon kind="leaderboard" />
+            </span>
+            <h3 className="text-lg font-semibold text-gray-900">{playerStatsPageCopy.leaderboard.title}</h3>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={loading}
+          className="inline-flex min-h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+        >
+          {loading ? playerStatsPageCopy.leaderboard.refreshLoading : playerStatsPageCopy.leaderboard.refresh}
+        </button>
+      </div>
+      <div className="mt-4 space-y-2">
+        {players.length > 0 ? (
+          players.map((player) => (
+            <button
+              key={player.player_name}
+              type="button"
+              onClick={() => onSelectPlayer(player.player_name)}
+              className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
+                selectedPlayer === player.player_name
+                  ? "border-indigo-200 bg-indigo-50"
+                  : "border-gray-200 bg-white hover:bg-gray-50"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-gray-900">{player.full_name || player.player_name}</p>
+                  {player.short_name && player.short_name !== (player.full_name || player.player_name) ? (
+                    <p className="mt-1 text-xs font-medium text-indigo-700">{player.short_name}</p>
+                  ) : null}
+                  <p className="mt-1 text-xs text-gray-500">
+                    {player.sessions_played} {playerStatsPageCopy.leaderboard.sessionsSuffix} • {player.matches_played} {playerStatsPageCopy.leaderboard.matchesSuffix}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-semibold text-indigo-700">{player.win_rate}%</p>
+                  <p className="mt-1 text-xs text-gray-500">{player.championships} {playerStatsPageCopy.leaderboard.titlesSuffix}</p>
+                </div>
+              </div>
+            </button>
+          ))
+        ) : (
+          <EmptyState
+            icon="leaderboard"
+            title={playerStatsPageCopy.leaderboard.emptyTitle}
+            description={playerStatsPageCopy.leaderboard.emptyDescription}
+          />
+        )}
+      </div>
+    </section>
+  );
 
-  useEffect(() => {
-    if (!shouldScrollToDetailRef.current || detailLoading) {
-      return;
+  const renderDetailContent = () => {
+    if (detailLoading) {
+      return (
+        <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
+          <p className="text-sm text-gray-600">{playerStatsPageCopy.profile.loading}</p>
+        </div>
+      );
     }
 
-    if (!window.matchMedia("(max-width: 1279px)").matches) {
-      shouldScrollToDetailRef.current = false;
-      return;
+    if (!playerDetail) {
+      return (
+        <EmptyState
+          icon="profile"
+          title={playerStatsPageCopy.profile.emptyTitle}
+          description={playerStatsPageCopy.profile.emptyDescription}
+        />
+      );
     }
 
-    detailSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    shouldScrollToDetailRef.current = false;
-  }, [selectedPlayer, detailLoading, playerDetail]);
+    return (
+      <>
+        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{playerStatsPageCopy.profile.eyebrow}</p>
+          <div className="mt-1 flex items-center gap-3">
+            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+              <StatsIcon kind="profile" className="h-5 w-5" />
+            </span>
+            <h3 className="text-2xl font-bold text-gray-900">{playerDetail.full_name || playerDetail.player_name}</h3>
+          </div>
+          {playerDetail.short_name && playerDetail.short_name !== (playerDetail.full_name || playerDetail.player_name) ? (
+            <p className="mt-2 text-sm font-medium text-indigo-700">{playerDetail.short_name}</p>
+          ) : null}
+          <p className="mt-2 text-sm text-gray-600">
+            {playerStatsPageCopy.profile.lastSessionPrefix} {playerDetail.last_session_at ? formatDate(playerDetail.last_session_at) : playerStatsPageCopy.profile.noSessions}
+          </p>
+        </div>
 
-  const handleSelectPlayer = (playerName) => {
-    shouldScrollToDetailRef.current = true;
-    onSelectPlayer(playerName);
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <MetricCard label={playerStatsPageCopy.metrics.sessions} value={playerDetail.sessions_played} tone="indigo" />
+          <MetricCard label={playerStatsPageCopy.metrics.matches} value={playerDetail.matches_played} tone="default" />
+          <MetricCard label={playerStatsPageCopy.metrics.winRate} value={`${playerDetail.win_rate}%`} tone="emerald" />
+          <MetricCard label={playerStatsPageCopy.metrics.championships} value={playerDetail.championships} tone="amber" />
+        </div>
+
+        <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+          <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{playerStatsPageCopy.partners.eyebrow}</p>
+          <div className="mt-1 flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+              <StatsIcon kind="partners" />
+            </span>
+            <h3 className="text-lg font-semibold text-gray-900">{playerStatsPageCopy.partners.titlePrefix} {playerDetail.full_name || playerDetail.player_name}</h3>
+          </div>
+          <div className="mt-4 space-y-3">
+            {playerDetail.top_partners.length > 0 ? (
+              playerDetail.top_partners.map((partner, index) => (
+                <div key={`${partner.partner_name}-${index}`} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">{partner.full_name || partner.partner_name}</p>
+                      {partner.short_name && partner.short_name !== (partner.full_name || partner.partner_name) ? (
+                        <p className="mt-1 text-xs font-medium text-indigo-700">{partner.short_name}</p>
+                      ) : null}
+                      <p className="mt-2 text-sm text-gray-600">
+                        {partner.matches_played} {playerStatsPageCopy.partners.matchesTogetherSuffix} • {partner.wins} {playerStatsPageCopy.partners.winsSuffix}
+                      </p>
+                    </div>
+                    <div className="rounded-full bg-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-700">
+                      {partner.win_rate}% {playerStatsPageCopy.partners.winRateSuffix}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyState
+                icon="partners"
+                title={playerStatsPageCopy.partners.emptyTitle}
+                description={playerStatsPageCopy.partners.emptyDescription}
+              />
+            )}
+          </div>
+        </div>
+      </>
+    );
   };
 
   return (
@@ -126,142 +249,28 @@ export default function PlayerStatsPage({
         </p>
       </section>
 
-      <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
-        <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{playerStatsPageCopy.leaderboard.eyebrow}</p>
-              <div className="mt-1 flex items-center gap-3">
-                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
-                  <StatsIcon kind="leaderboard" />
-                </span>
-                <h3 className="text-lg font-semibold text-gray-900">{playerStatsPageCopy.leaderboard.title}</h3>
-              </div>
-            </div>
+      <div className="space-y-6 xl:hidden">
+        {selectedPlayer ? (
+          <section className="space-y-6">
             <button
               type="button"
-              onClick={onRefresh}
-              disabled={loading}
-              className="inline-flex min-h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
+              onClick={() => onSelectPlayer(null)}
+              className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50"
             >
-              {loading ? playerStatsPageCopy.leaderboard.refreshLoading : playerStatsPageCopy.leaderboard.refresh}
+              <span aria-hidden="true">←</span>
+              <span>{playerStatsPageCopy.profile.backToList}</span>
             </button>
-          </div>
-          <div className="mt-4 space-y-2">
-            {players.length > 0 ? (
-              players.map((player) => (
-                <button
-                  key={player.player_name}
-                  type="button"
-                  onClick={() => handleSelectPlayer(player.player_name)}
-                  className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
-                    selectedPlayer === player.player_name
-                      ? "border-indigo-200 bg-indigo-50"
-                      : "border-gray-200 bg-white hover:bg-gray-50"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold text-gray-900">{player.full_name || player.player_name}</p>
-                      {player.short_name && player.short_name !== (player.full_name || player.player_name) ? (
-                        <p className="mt-1 text-xs font-medium text-indigo-700">{player.short_name}</p>
-                      ) : null}
-                      <p className="mt-1 text-xs text-gray-500">
-                        {player.sessions_played} {playerStatsPageCopy.leaderboard.sessionsSuffix} • {player.matches_played} {playerStatsPageCopy.leaderboard.matchesSuffix}
-                      </p>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold text-indigo-700">{player.win_rate}%</p>
-                      <p className="mt-1 text-xs text-gray-500">{player.championships} {playerStatsPageCopy.leaderboard.titlesSuffix}</p>
-                    </div>
-                  </div>
-                </button>
-              ))
-            ) : (
-              <EmptyState
-                icon="leaderboard"
-                title={playerStatsPageCopy.leaderboard.emptyTitle}
-                description={playerStatsPageCopy.leaderboard.emptyDescription}
-              />
-            )}
-          </div>
-        </section>
+            {renderDetailContent()}
+          </section>
+        ) : (
+          renderLeaderboard()
+        )}
+      </div>
 
-        <section ref={detailSectionRef} className="space-y-6">
-          {detailLoading ? (
-            <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <p className="text-sm text-gray-600">{playerStatsPageCopy.profile.loading}</p>
-            </div>
-          ) : playerDetail ? (
-            <>
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{playerStatsPageCopy.profile.eyebrow}</p>
-                <div className="mt-1 flex items-center gap-3">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
-                    <StatsIcon kind="profile" className="h-5 w-5" />
-                  </span>
-                  <h3 className="text-2xl font-bold text-gray-900">{playerDetail.full_name || playerDetail.player_name}</h3>
-                </div>
-                {playerDetail.short_name && playerDetail.short_name !== (playerDetail.full_name || playerDetail.player_name) ? (
-                  <p className="mt-2 text-sm font-medium text-indigo-700">{playerDetail.short_name}</p>
-                ) : null}
-                <p className="mt-2 text-sm text-gray-600">
-                  {playerStatsPageCopy.profile.lastSessionPrefix} {playerDetail.last_session_at ? formatDate(playerDetail.last_session_at) : playerStatsPageCopy.profile.noSessions}
-                </p>
-              </div>
-
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <MetricCard label={playerStatsPageCopy.metrics.sessions} value={playerDetail.sessions_played} tone="indigo" />
-                <MetricCard label={playerStatsPageCopy.metrics.matches} value={playerDetail.matches_played} tone="default" />
-                <MetricCard label={playerStatsPageCopy.metrics.winRate} value={`${playerDetail.win_rate}%`} tone="emerald" />
-                <MetricCard label={playerStatsPageCopy.metrics.championships} value={playerDetail.championships} tone="amber" />
-              </div>
-
-              <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{playerStatsPageCopy.partners.eyebrow}</p>
-                <div className="mt-1 flex items-center gap-3">
-                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
-                    <StatsIcon kind="partners" />
-                  </span>
-                  <h3 className="text-lg font-semibold text-gray-900">{playerStatsPageCopy.partners.titlePrefix} {playerDetail.full_name || playerDetail.player_name}</h3>
-                </div>
-                <div className="mt-4 space-y-3">
-                  {playerDetail.top_partners.length > 0 ? (
-                    playerDetail.top_partners.map((partner, index) => (
-                      <div key={`${partner.partner_name}-${index}`} className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div>
-                            <p className="text-sm font-semibold text-gray-900">{partner.full_name || partner.partner_name}</p>
-                            {partner.short_name && partner.short_name !== (partner.full_name || partner.partner_name) ? (
-                              <p className="mt-1 text-xs font-medium text-indigo-700">{partner.short_name}</p>
-                            ) : null}
-                            <p className="mt-2 text-sm text-gray-600">
-                              {partner.matches_played} {playerStatsPageCopy.partners.matchesTogetherSuffix} • {partner.wins} {playerStatsPageCopy.partners.winsSuffix}
-                            </p>
-                          </div>
-                          <div className="rounded-full bg-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-700">
-                            {partner.win_rate}% {playerStatsPageCopy.partners.winRateSuffix}
-                          </div>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <EmptyState
-                      icon="partners"
-                      title={playerStatsPageCopy.partners.emptyTitle}
-                      description={playerStatsPageCopy.partners.emptyDescription}
-                    />
-                  )}
-                </div>
-              </div>
-            </>
-          ) : (
-            <EmptyState
-              icon="profile"
-              title={playerStatsPageCopy.profile.emptyTitle}
-              description={playerStatsPageCopy.profile.emptyDescription}
-            />
-          )}
+      <div className="hidden gap-6 xl:grid xl:grid-cols-[320px_minmax(0,1fr)]">
+        {renderLeaderboard()}
+        <section className="space-y-6">
+          {renderDetailContent()}
         </section>
       </div>
     </div>

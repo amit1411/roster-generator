@@ -194,6 +194,7 @@ export const playerStatsPageCopy = {
     lastSessionPrefix: "Last completed session:",
     noSessions: "No completed sessions yet",
     loading: "Loading player details...",
+    backToList: "Back to leaderboard",
     emptyTitle: "Select a player",
     emptyDescription: "Choose someone from the leaderboard to view their league and knockout performance.",
   },
