@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 import { playerStatsPageCopy } from "../content/uiCopy";
 
 function MetricCard({ label, value, tone = "default" }) {
@@ -92,6 +94,28 @@ export default function PlayerStatsPage({
   onSelectPlayer,
   onRefresh,
 }) {
+  const detailSectionRef = useRef(null);
+  const shouldScrollToDetailRef = useRef(false);
+
+  useEffect(() => {
+    if (!shouldScrollToDetailRef.current || detailLoading) {
+      return;
+    }
+
+    if (!window.matchMedia("(max-width: 1279px)").matches) {
+      shouldScrollToDetailRef.current = false;
+      return;
+    }
+
+    detailSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    shouldScrollToDetailRef.current = false;
+  }, [selectedPlayer, detailLoading, playerDetail]);
+
+  const handleSelectPlayer = (playerName) => {
+    shouldScrollToDetailRef.current = true;
+    onSelectPlayer(playerName);
+  };
+
   return (
     <div className="space-y-8">
       <section className="rounded-2xl border border-violet-100 bg-gradient-to-r from-violet-600 via-indigo-500 to-sky-500 p-5 text-white shadow-sm sm:p-6">
@@ -129,7 +153,7 @@ export default function PlayerStatsPage({
                 <button
                   key={player.player_name}
                   type="button"
-                  onClick={() => onSelectPlayer(player.player_name)}
+                  onClick={() => handleSelectPlayer(player.player_name)}
                   className={`w-full rounded-xl border px-4 py-3 text-left transition-colors ${
                     selectedPlayer === player.player_name
                       ? "border-indigo-200 bg-indigo-50"
@@ -163,7 +187,7 @@ export default function PlayerStatsPage({
           </div>
         </section>
 
-        <section className="space-y-6">
+        <section ref={detailSectionRef} className="space-y-6">
           {detailLoading ? (
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
               <p className="text-sm text-gray-600">{playerStatsPageCopy.profile.loading}</p>
