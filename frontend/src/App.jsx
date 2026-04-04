@@ -1043,8 +1043,8 @@ export default function App() {
       return;
     }
 
-    if (!selectedPlayer || !playerStats.some((player) => player.playerName === selectedPlayer)) {
-      setSelectedPlayer(playerStats[0].playerName);
+    if (selectedPlayer && !playerStats.some((player) => player.playerName === selectedPlayer)) {
+      setSelectedPlayer(null);
     }
   }, [playerStats, selectedPlayer, playerStatsDetail]);
 
