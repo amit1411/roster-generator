@@ -17,7 +17,7 @@ export default defineConfig({
     : [
         {
           command:
-            "rm -f /tmp/badminton-roster-rename-e2e.db && DATABASE_URL=sqlite:////tmp/badminton-roster-rename-e2e.db ../backend/venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8010",
+            "rm -f /tmp/badminton-roster-rename-e2e.db && PLAYWRIGHT_TEST_MODE=1 DATABASE_URL=sqlite:////tmp/badminton-roster-rename-e2e.db ../backend/venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8010",
           cwd: "../backend",
           url: `${apiBaseURL}/docs`,
           reuseExistingServer: false,

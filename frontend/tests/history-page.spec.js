@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { navigateToSection } from "./helpers/navigation";
 import {
   completeRoundRobinSession,
   createRoundRobinSession,
@@ -12,7 +13,7 @@ test("history shows only completed sessions while active sessions stay separate"
   await createRoundRobinSession(request, activeName);
 
   await page.goto("/");
-  await page.getByRole("button", { name: "History" }).click();
+  await navigateToSection(page, "History");
 
   const historySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Historical results" }) });
   const historyCard = historySection.locator("div.rounded-2xl").filter({ hasText: completedName }).first();
@@ -20,7 +21,7 @@ test("history shows only completed sessions while active sessions stay separate"
   await expect(page.getByText("No completed sessions yet.")).toHaveCount(0);
   await expect(page.getByText(activeName)).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Active Sessions" }).click();
+  await navigateToSection(page, "Active Sessions");
   const activeSection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Sessions that are ready or in progress" }) });
   const activeCard = activeSection.locator("div.rounded-2xl").filter({ hasText: activeName }).first();
   await expect(activeCard.getByText(activeName)).toBeVisible();

@@ -1691,6 +1691,7 @@ def create_shared_session(req: SharedSessionCreateRequest):
         db.refresh(record)
         response = _serialize_session(record, edit_token=payload["edit_token"], db=db)
         _invalidate_session_views(session_id, include_analytics=False)
+        _invalidate_player_views()
         return response
 
 

@@ -1,11 +1,12 @@
 import { expect, test } from "@playwright/test";
+import { navigateToSection } from "./helpers/navigation";
 import { completeRoundRobinSession } from "./helpers/session";
 
 test("player stats page shows completed-session analytics", async ({ page, request }) => {
   await completeRoundRobinSession(request, "Player Stats Complete");
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Player Stats" }).click();
+  await navigateToSection(page, "Player Stats");
 
   await expect(page.getByRole("heading", { name: "Leaderboard" })).toBeVisible();
   const leaderboard = page.locator("section").filter({ has: page.getByRole("heading", { name: "Leaderboard" }) });
@@ -25,7 +26,7 @@ test("mobile player stats keeps leaderboard visible until a player is selected",
   await completeRoundRobinSession(request, "Mobile Player Stats");
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Player Stats" }).click();
+  await navigateToSection(page, "Player Stats");
 
   const leaderboardHeading = page.getByRole("heading", { name: "Leaderboard" });
   await expect(leaderboardHeading).toBeVisible();

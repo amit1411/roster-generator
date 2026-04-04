@@ -697,6 +697,32 @@ function NavIcon({ kind, className = "h-4 w-4" }) {
   }
 }
 
+function MenuIcon({ open, className = "h-5 w-5" }) {
+  const props = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.8",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    className,
+    "aria-hidden": true,
+  };
+
+  return open ? (
+    <svg {...props}>
+      <path d="M6 6 18 18" />
+      <path d="m18 6-12 12" />
+    </svg>
+  ) : (
+    <svg {...props}>
+      <path d="M4.5 7h15" />
+      <path d="M4.5 12h15" />
+      <path d="M4.5 17h15" />
+    </svg>
+  );
+}
+
 function normalizeCompletedSessionSummary(session) {
   if (!session?.session_id) return null;
 
@@ -827,6 +853,7 @@ export default function App() {
   const [organizerTokenDraft, setOrganizerTokenDraft] = useState(savedOrganizerToken || "");
   const [organizerDialogOpen, setOrganizerDialogOpen] = useState(false);
   const [organizerDialogError, setOrganizerDialogError] = useState(null);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const timerRef = useRef(null);
   const sessionTimerRef = useRef(null);
   const reviewStepRef = useRef(null);
@@ -889,6 +916,10 @@ export default function App() {
 
   useEffect(() => {
     writeStorage(VIEW_STORAGE_KEY, view);
+  }, [view]);
+
+  useEffect(() => {
+    setMobileNavOpen(false);
   }, [view]);
 
   useEffect(() => {
@@ -1613,38 +1644,59 @@ export default function App() {
     { key: "player-stats", label: "Player Stats", icon: "stats" },
   ];
 
+  function navigateToView(nextView) {
+    previousNonScoringViewRef.current = nextView;
+    setView(nextView);
+    setMobileNavOpen(false);
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/95 backdrop-blur">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <button
-            type="button"
-            onClick={() => {
-              previousNonScoringViewRef.current = "planner";
-              setSessionIdInUrl(null);
-              setView("planner");
-              setPlannerStep(1);
-              setError(null);
-            }}
-            className="flex items-center gap-3 text-left"
-          >
-            <BrandIcon className="h-11 w-11 shrink-0" />
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-indigo-500">{appCopy.brand.eyebrow}</p>
-              <h1 className="text-lg font-bold text-gray-900 sm:text-xl">{appCopy.brand.title}</h1>
-            </div>
-          </button>
-          <nav className="flex flex-wrap gap-2">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => {
+                previousNonScoringViewRef.current = "planner";
+                setSessionIdInUrl(null);
+                setView("planner");
+                setPlannerStep(1);
+                setError(null);
+                setMobileNavOpen(false);
+              }}
+              className="flex min-w-0 items-center gap-3 text-left"
+            >
+              <BrandIcon className="h-11 w-11 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-indigo-500">{appCopy.brand.eyebrow}</p>
+                <h1 className="truncate text-lg font-bold text-gray-900 sm:text-xl">{appCopy.brand.title}</h1>
+                {view === "scoring" && currentSession?.name ? (
+                  <p className="truncate text-xs font-medium text-gray-500 md:hidden">{currentSession.name}</p>
+                ) : null}
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setMobileNavOpen((current) => !current)}
+              aria-expanded={mobileNavOpen}
+              aria-controls="mobile-global-nav"
+              aria-label="Open navigation"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl border border-gray-300 bg-white text-gray-700 shadow-sm transition-colors hover:bg-gray-50 md:hidden"
+            >
+              <MenuIcon open={mobileNavOpen} />
+            </button>
+          </div>
+
+          <nav className="mt-4 hidden flex-wrap gap-2 md:flex">
             {navItems.map((item) => {
               const isActive = view === item.key;
               return (
                 <button
                   key={item.key}
                   type="button"
-                  onClick={() => {
-                    previousNonScoringViewRef.current = item.key;
-                    setView(item.key);
-                  }}
+                  onClick={() => navigateToView(item.key)}
                   className={`inline-flex min-h-10 items-center justify-center rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
                     isActive
                       ? "bg-indigo-600 text-white"
@@ -1657,6 +1709,38 @@ export default function App() {
               );
             })}
           </nav>
+
+          {mobileNavOpen ? (
+            <div className="md:hidden">
+              <div className="fixed inset-0 z-40 bg-slate-900/35" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />
+              <nav
+                id="mobile-global-nav"
+                className="absolute inset-x-4 top-[calc(100%+0.75rem)] z-50 rounded-3xl border border-gray-200 bg-white p-3 shadow-2xl"
+              >
+                <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-[0.24em] text-gray-400">Navigate</p>
+                <div className="grid gap-2">
+                  {navItems.map((item) => {
+                    const isActive = view === item.key;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() => navigateToView(item.key)}
+                        className={`flex min-h-12 items-center rounded-2xl px-4 py-3 text-left text-sm font-semibold transition-colors ${
+                          isActive
+                            ? "bg-indigo-600 text-white"
+                            : "bg-gray-50 text-gray-700 hover:bg-gray-100"
+                        }`}
+                      >
+                        <NavIcon kind={item.icon} className="mr-3 h-4 w-4" />
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </nav>
+            </div>
+          ) : null}
         </div>
       </header>
 

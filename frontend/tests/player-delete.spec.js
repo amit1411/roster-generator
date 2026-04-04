@@ -1,9 +1,16 @@
 import { expect, test } from "@playwright/test";
+import { navigateToSection } from "./helpers/navigation";
 import { createSharedSession, generateRoster, postRoundAction, postScore } from "./helpers/session";
 
-test("deleting a player from the directory keeps historical stats unless requested", async ({ page, request }) => {
+test("deleting a player from the directory keeps historical stats unless requested", async ({ page, request }, testInfo) => {
+  const suffix = testInfo.project.name;
+  const alphaName = `Delete Alpha ${suffix}`;
+  const bravoName = `Delete Bravo ${suffix}`;
+  const charlieName = `Delete Charlie ${suffix}`;
+  const deltaName = `Delete Delta ${suffix}`;
+
   const roster = await generateRoster(request, {
-    players: ["Delete Alpha", "Delete Bravo", "Delete Charlie", "Delete Delta"],
+    players: [alphaName, bravoName, charlieName, deltaName],
     num_courts: 1,
     court_numbers: ["1"],
     rounds: 1,
@@ -44,19 +51,21 @@ test("deleting a player from the directory keeps historical stats unless request
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Players", exact: true }).click();
+  await navigateToSection(page, "Players");
 
-  const directoryCard = page.locator("div.rounded-2xl.border.border-gray-200.bg-gray-50").filter({ hasText: "Delete Alpha" }).first();
+  const directorySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Registered players" }) });
+  const directoryCard = directorySection.locator("div.rounded-2xl.border.border-gray-200.bg-gray-50").filter({ hasText: alphaName }).first();
   await directoryCard.scrollIntoViewIfNeeded();
   await directoryCard.getByRole("button", { name: "Delete", exact: true }).click();
 
-  await expect(page.getByText("This action is intentionally strict")).toBeVisible();
-  await expect(page.getByText("Also delete historical player records")).toBeVisible();
-  await page.getByPlaceholder("Enter ADMIN_RECOVERY_TOKEN").fill("thisismytoken");
-  await page.getByRole("button", { name: "Delete Player" }).click();
+  const deleteDialog = page.locator("div.fixed.inset-0").filter({ hasText: "This action is intentionally strict" });
+  await expect(deleteDialog.getByText("This action is intentionally strict")).toBeVisible();
+  await expect(deleteDialog.getByText("Also delete historical player records")).toBeVisible();
+  await deleteDialog.getByLabel("Admin token").fill("thisismytoken");
+  await deleteDialog.getByRole("button", { name: "Delete Player" }).click();
 
-  await expect(page.getByText("Delete Alpha")).toHaveCount(0);
+  await expect(directoryCard).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Player Stats" }).click();
-  await expect(page.getByRole("button", { name: /Delete Alpha/ })).toBeVisible();
+  await navigateToSection(page, "Player Stats");
+  await expect(page.getByRole("button", { name: new RegExp(alphaName) })).toBeVisible();
 });

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { navigateToSection } from "./helpers/navigation";
 import { completeRoundRobinSession } from "./helpers/session";
 
 test("deleting a completed session removes it from history but keeps player stats", async ({ page, request }) => {
@@ -9,13 +10,13 @@ test("deleting a completed session removes it from history but keeps player stat
   await page.getByRole("button", { name: "Back to Roster" }).click();
 
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "History" }).click();
+  await navigateToSection(page, "History");
   const historyCard = page.locator("div.rounded-2xl").filter({ hasText: "Delete History Keep Stats" }).first();
   await expect(historyCard.getByText("Delete History Keep Stats")).toBeVisible();
   await historyCard.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(page.getByText("Delete History Keep Stats")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Player Stats" }).click();
+  await navigateToSection(page, "Player Stats");
   const leaderboard = page.locator("section").filter({ has: page.getByRole("heading", { name: "Leaderboard" }) });
   await expect(leaderboard.getByRole("button", { name: /^A\b/ })).toBeVisible();
 });

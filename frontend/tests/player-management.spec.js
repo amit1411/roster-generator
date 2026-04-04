@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { navigateToSection } from "./helpers/navigation";
 import { createSharedSession, generateRoster } from "./helpers/session";
 
 test("player directory imports names from existing sessions", async ({ page, request }) => {
@@ -17,10 +18,14 @@ test("player directory imports names from existing sessions", async ({ page, req
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Players", exact: true }).click();
+  await navigateToSection(page, "Players");
 
-  await expect(page.locator("p").filter({ hasText: /^Legacy One$/ })).toBeVisible();
-  await expect(page.locator("p").filter({ hasText: /^Legacy Two$/ })).toBeVisible();
+  const directorySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Registered players" }) });
+  const legacyOneCard = directorySection.locator("div.rounded-2xl.border.border-gray-200.bg-gray-50").filter({ hasText: "Legacy One" }).first();
+  const legacyTwoCard = directorySection.locator("div.rounded-2xl.border.border-gray-200.bg-gray-50").filter({ hasText: "Legacy Two" }).first();
+  await legacyOneCard.scrollIntoViewIfNeeded();
+  await expect(legacyOneCard.getByText("Legacy One", { exact: true }).first()).toBeVisible();
+  await expect(legacyTwoCard.getByText("Legacy Two", { exact: true }).first()).toBeVisible();
 });
 
 test("players can be created, selected from the planner directory, and used to start a protected session", async ({ page }) => {
@@ -32,7 +37,7 @@ test("players can be created, selected from the planner directory, and used to s
   ];
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Players", exact: true }).click();
+  await navigateToSection(page, "Players");
 
   for (const player of players) {
     await page.getByLabel("Full Name").fill(player.fullName);
@@ -41,7 +46,7 @@ test("players can be created, selected from the planner directory, and used to s
     await expect(page.getByText(player.fullName)).toBeVisible();
   }
 
-  await page.getByRole("button", { name: "Planner", exact: true }).click();
+  await navigateToSection(page, "Planner");
 
   const searchInput = page.getByPlaceholder("Search players...");
   for (const player of players) {

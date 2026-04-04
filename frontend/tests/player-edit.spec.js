@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { navigateToSection } from "./helpers/navigation";
 import { createSharedSession, generateRoster, postRoundAction, postScore } from "./helpers/session";
 
 test("editing a player keeps existing completed stats mapped to the same player", async ({ page, request }) => {
@@ -44,9 +45,11 @@ test("editing a player keeps existing completed stats mapped to the same player"
   });
 
   await page.goto("/");
-  await page.getByRole("button", { name: "Players", exact: true }).click();
+  await navigateToSection(page, "Players");
 
-  const directoryCard = page.locator("div.rounded-2xl").filter({ hasText: "Legacy Alpha" }).first();
+  const directorySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Registered players" }) });
+  const directoryCard = directorySection.locator("div.rounded-2xl").filter({ hasText: "Legacy Alpha" }).first();
+  await directoryCard.scrollIntoViewIfNeeded();
   await directoryCard.getByRole("button", { name: "Edit" }).click();
 
   await page.getByLabel("Full Name").last().fill("Alpha Prime");
@@ -56,6 +59,6 @@ test("editing a player keeps existing completed stats mapped to the same player"
   await expect(page.getByText("Alpha Prime")).toBeVisible();
   await expect(page.getByText("Also matched from older names:", { exact: false })).toBeVisible();
 
-  await page.getByRole("button", { name: "Player Stats" }).click();
+  await navigateToSection(page, "Player Stats");
   await expect(page.getByRole("button", { name: /Alpha Prime/ })).toBeVisible();
 });

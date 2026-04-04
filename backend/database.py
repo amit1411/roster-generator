@@ -24,12 +24,31 @@ def normalize_database_url(raw_url: str) -> str:
     return raw_url
 
 
+def validate_test_database_url(database_url: str):
+    """Prevent Playwright runs from accidentally using a real local database."""
+    if os.getenv("PLAYWRIGHT_TEST_MODE") != "1":
+        return
+
+    safe_prefixes = (
+        "sqlite:///:memory:",
+        "sqlite:////tmp/",
+    )
+    if database_url.startswith(safe_prefixes):
+        return
+
+    raise RuntimeError(
+        "PLAYWRIGHT_TEST_MODE=1 requires a temporary SQLite database under /tmp or :memory:. "
+        f"Refusing to start with DATABASE_URL={database_url!r}."
+    )
+
+
 DATABASE_URL = normalize_database_url(
     os.getenv(
         "DATABASE_URL",
         "postgresql+psycopg://postgres:postgres@localhost:5433/badminton_roster",
     )
 )
+validate_test_database_url(DATABASE_URL)
 
 
 class Base(DeclarativeBase):

@@ -16,9 +16,10 @@ test("planner steps can be clicked to jump between stages", async ({ page, reque
   await page.goto("/");
 
   const searchInput = page.getByPlaceholder("Search players...");
+  const directorySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Player Directory" }) });
   for (const player of players) {
     await searchInput.fill(player.shortName);
-    const card = page.locator("section").filter({ has: page.getByText(player.fullName) }).last();
+    const card = directorySection.locator("div").filter({ hasText: player.fullName }).first();
     await card.getByRole("button", { name: "Add" }).click();
   }
 
