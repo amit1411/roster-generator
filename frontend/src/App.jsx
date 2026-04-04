@@ -8,6 +8,7 @@ import ActiveSessionsPage from "./components/ActiveSessionsPage";
 import HistoryPage from "./components/HistoryPage";
 import PlayerStatsPage from "./components/PlayerStatsPage";
 import PlayersPage from "./components/PlayersPage";
+import { appCopy } from "./content/uiCopy";
 import {
   batchUpdateSharedScores,
   createPlayer,
@@ -415,8 +416,8 @@ function RenameSessionDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
       <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-5 shadow-xl">
-        <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Rename Session</p>
-        <h3 className="mt-1 text-lg font-semibold text-gray-900">Update the session name</h3>
+        <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{appCopy.renameDialog.eyebrow}</p>
+        <h3 className="mt-1 text-lg font-semibold text-gray-900">{appCopy.renameDialog.title}</h3>
         <form
           className="mt-4 space-y-4"
           onSubmit={(event) => {
@@ -425,7 +426,7 @@ function RenameSessionDialog({
           }}
         >
           <label className="block text-sm font-medium text-gray-700" htmlFor="rename-session-name">
-            Session name
+            {appCopy.renameDialog.fieldLabel}
             <input
               id="rename-session-name"
               type="text"
@@ -443,14 +444,14 @@ function RenameSessionDialog({
               disabled={loading}
               className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
             >
-              Cancel
+              {appCopy.renameDialog.cancel}
             </button>
             <button
               type="submit"
               disabled={loading || !value.trim()}
               className="inline-flex min-h-11 items-center justify-center rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
             >
-              {loading ? "Saving..." : "Save Name"}
+              {loading ? appCopy.renameDialog.submitLoading : appCopy.renameDialog.submit}
             </button>
           </div>
         </form>
@@ -473,10 +474,10 @@ function OrganizerTokenDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
       <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-5 shadow-xl">
-        <p className="text-sm font-semibold uppercase tracking-wide text-amber-600">Organizer Check</p>
-        <h3 className="mt-1 text-lg font-semibold text-gray-900">Enter organizer token to start a session</h3>
+        <p className="text-sm font-semibold uppercase tracking-wide text-amber-600">{appCopy.organizerDialog.eyebrow}</p>
+        <h3 className="mt-1 text-lg font-semibold text-gray-900">{appCopy.organizerDialog.title}</h3>
         <p className="mt-2 text-sm text-gray-600">
-          This is a temporary safeguard until login exists. The token is remembered on this device so organizers do not need to re-enter it every time.
+          {appCopy.organizerDialog.description}
         </p>
         <form
           className="mt-4 space-y-4"
@@ -486,14 +487,14 @@ function OrganizerTokenDialog({
           }}
         >
           <label className="block text-sm font-medium text-gray-700" htmlFor="organizer-token">
-            Organizer token
+            {appCopy.organizerDialog.fieldLabel}
             <input
               id="organizer-token"
               type="password"
               value={value}
               onChange={(event) => onChange(event.target.value)}
               disabled={loading}
-              placeholder="Enter ADMIN_RECOVERY_TOKEN"
+              placeholder={appCopy.organizerDialog.fieldPlaceholder}
               className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 disabled:bg-gray-100"
             />
           </label>
@@ -509,14 +510,14 @@ function OrganizerTokenDialog({
               disabled={loading}
               className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
             >
-              Cancel
+              {appCopy.organizerDialog.cancel}
             </button>
             <button
               type="submit"
               disabled={loading || !value.trim()}
               className="inline-flex min-h-11 items-center justify-center rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
             >
-              {loading ? "Checking..." : "Start Session"}
+              {loading ? appCopy.organizerDialog.submitLoading : appCopy.organizerDialog.submit}
             </button>
           </div>
         </form>
@@ -612,6 +613,88 @@ function waitForNextPaint() {
   return new Promise((resolve) => {
     window.requestAnimationFrame(() => resolve());
   });
+}
+
+function BrandIcon({ className = "h-10 w-10" }) {
+  return (
+    <svg viewBox="0 0 48 48" fill="none" aria-hidden="true" className={className}>
+      <defs>
+        <linearGradient id="brand-gradient" x1="8" y1="8" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#4F46E5" />
+          <stop offset="0.55" stopColor="#0EA5E9" />
+          <stop offset="1" stopColor="#14B8A6" />
+        </linearGradient>
+      </defs>
+      <rect x="4" y="4" width="40" height="40" rx="14" fill="url(#brand-gradient)" />
+      <path d="M24 11.5 17.5 19 24 22.2 30.5 19 24 11.5Z" fill="white" fillOpacity="0.96" />
+      <path d="M24 23.8 15 20.1 18.1 31.5 24 37l5.9-5.5L33 20.1l-9 3.7Z" fill="white" fillOpacity="0.92" />
+      <path d="M20.8 27.4 18.7 33.1M24 26.9V37M27.2 27.4l2.1 5.7" stroke="#4F46E5" strokeWidth="1.7" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function NavIcon({ kind, className = "h-4 w-4" }) {
+  const commonProps = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.8",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    className,
+    "aria-hidden": true,
+  };
+
+  switch (kind) {
+    case "planner":
+      return (
+        <svg {...commonProps}>
+          <path d="M4.5 6.5h15" />
+          <path d="M4.5 12h15" />
+          <path d="M4.5 17.5h9" />
+          <path d="M18 16.8 19.8 18.6 16.5 21H14.7v-1.8L18 16.8Z" />
+        </svg>
+      );
+    case "players":
+      return (
+        <svg {...commonProps}>
+          <path d="M12 12.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+          <path d="M5.5 19.5a6.5 6.5 0 0 1 13 0" />
+        </svg>
+      );
+    case "sessions":
+      return (
+        <svg {...commonProps}>
+          <rect x="4.5" y="5.5" width="15" height="13" rx="2.5" />
+          <path d="M8 3.8v3.4M16 3.8v3.4M4.5 10h15" />
+        </svg>
+      );
+    case "history":
+      return (
+        <svg {...commonProps}>
+          <path d="M12 6v6l4 2.2" />
+          <path d="M4.8 11a7.2 7.2 0 1 1 2.1 6" />
+          <path d="M4.5 6.5v4.8h4.8" />
+        </svg>
+      );
+    case "stats":
+      return (
+        <svg {...commonProps}>
+          <path d="M5 18.5h14" />
+          <path d="M7.5 16V11.5" />
+          <path d="M12 16V8.5" />
+          <path d="M16.5 16V6" />
+        </svg>
+      );
+    case "spark":
+      return (
+        <svg {...commonProps}>
+          <path d="m12 3 1.7 4.8L18.5 9.5l-4.8 1.7L12 16l-1.7-4.8L5.5 9.5l4.8-1.7L12 3Z" />
+        </svg>
+      );
+    default:
+      return null;
+  }
 }
 
 function normalizeCompletedSessionSummary(session) {
@@ -1523,20 +1606,34 @@ export default function App() {
   const canContinueFromSettings = config.num_courts >= 1;
   const activeSessions = sessions.filter((session) => session.status !== "completed");
   const navItems = [
-    { key: "planner", label: "Planner" },
-    { key: "players", label: "Players" },
-    { key: "sessions", label: "Active Sessions" },
-    { key: "history", label: "History" },
-    { key: "player-stats", label: "Player Stats" },
+    { key: "planner", label: "Planner", icon: "planner" },
+    { key: "players", label: "Players", icon: "players" },
+    { key: "sessions", label: "Active Sessions", icon: "sessions" },
+    { key: "history", label: "History", icon: "history" },
+    { key: "player-stats", label: "Player Stats", icon: "stats" },
   ];
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-10">
+      <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/95 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Badminton</h1>
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              previousNonScoringViewRef.current = "planner";
+              setSessionIdInUrl(null);
+              setView("planner");
+              setPlannerStep(1);
+              setError(null);
+            }}
+            className="flex items-center gap-3 text-left"
+          >
+            <BrandIcon className="h-11 w-11 shrink-0" />
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-indigo-500">{appCopy.brand.eyebrow}</p>
+              <h1 className="text-lg font-bold text-gray-900 sm:text-xl">{appCopy.brand.title}</h1>
+            </div>
+          </button>
           <nav className="flex flex-wrap gap-2">
             {navItems.map((item) => {
               const isActive = view === item.key;
@@ -1554,6 +1651,7 @@ export default function App() {
                       : "border border-gray-300 bg-white text-gray-700 hover:bg-gray-50"
                   }`}
                 >
+                  <NavIcon kind={item.icon} className="mr-2 h-4 w-4" />
                   {item.label}
                 </button>
               );
@@ -1616,11 +1714,25 @@ export default function App() {
             <section className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-600 via-indigo-500 to-sky-500 p-5 text-white shadow-sm sm:p-6">
               <div className="flex flex-col gap-5">
                 <div>
-                  <p className="text-sm font-medium text-indigo-100">Planner</p>
-                  <h2 className="mt-1 text-2xl font-bold">Build the next session from scratch</h2>
+                  <p className="text-sm font-medium text-indigo-100">{appCopy.planner.eyebrow}</p>
+                  <h2 className="mt-1 text-2xl font-bold">{appCopy.planner.title}</h2>
                   <p className="mt-2 max-w-3xl text-sm text-indigo-50">
-                    Keep this page focused on setup: add players, configure the format, generate the roster, and start a new session.
+                    {appCopy.planner.description}
                   </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <span className="inline-flex items-center rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold text-white">
+                    <NavIcon kind="players" className="mr-1.5 h-3.5 w-3.5" />
+                    {appCopy.planner.badges[0]}
+                  </span>
+                  <span className="inline-flex items-center rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold text-white">
+                    <NavIcon kind="spark" className="mr-1.5 h-3.5 w-3.5" />
+                    {appCopy.planner.badges[1]}
+                  </span>
+                  <span className="inline-flex items-center rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-semibold text-white">
+                    <NavIcon kind="stats" className="mr-1.5 h-3.5 w-3.5" />
+                    {appCopy.planner.badges[2]}
+                  </span>
                 </div>
               </div>
             </section>

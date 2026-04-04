@@ -41,7 +41,7 @@ test("players can be created, selected from the planner directory, and used to s
     await expect(page.getByText(player.fullName)).toBeVisible();
   }
 
-  await page.getByRole("button", { name: "Planner" }).click();
+  await page.getByRole("button", { name: "Planner", exact: true }).click();
 
   const searchInput = page.getByPlaceholder("Search players...");
   for (const player of players) {
@@ -69,5 +69,5 @@ test("players can be created, selected from the planner directory, and used to s
   await organizerDialog.getByRole("button", { name: "Start Session" }).click();
 
   await expect(page.getByText("Scoring Console")).toBeVisible();
-  await expect(page.getByText(/Session /)).toBeVisible();
+  await expect(page.locator("p").filter({ hasText: /^Session \d{4}-\d{2}-\d{2}/ })).toBeVisible();
 });

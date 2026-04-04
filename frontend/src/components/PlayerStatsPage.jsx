@@ -1,3 +1,5 @@
+import { playerStatsPageCopy } from "../content/uiCopy";
+
 function MetricCard({ label, value, tone = "default" }) {
   const tones = {
     default: "border-slate-200 bg-white text-slate-900",
@@ -10,6 +12,59 @@ function MetricCard({ label, value, tone = "default" }) {
     <div className={`rounded-2xl border p-4 shadow-sm ${tones[tone]}`}>
       <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</p>
       <p className="mt-2 text-lg font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function StatsIcon({ kind, className = "h-5 w-5" }) {
+  const props = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.8",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    className,
+    "aria-hidden": true,
+  };
+
+  switch (kind) {
+    case "leaderboard":
+      return (
+        <svg {...props}>
+          <path d="M5 18.5h14" />
+          <path d="M7.5 16V11.5" />
+          <path d="M12 16V8.5" />
+          <path d="M16.5 16V6" />
+        </svg>
+      );
+    case "profile":
+      return (
+        <svg {...props}>
+          <path d="M12 12.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+          <path d="M5.5 19.5a6.5 6.5 0 0 1 13 0" />
+        </svg>
+      );
+    case "partners":
+      return (
+        <svg {...props}>
+          <path d="M8.5 8.5a2.5 2.5 0 1 0-3.5 3.5l2 2a2.5 2.5 0 0 0 3.5 0l1.5-1.5" />
+          <path d="M15.5 15.5a2.5 2.5 0 1 0 3.5-3.5l-2-2a2.5 2.5 0 0 0-3.5 0L12 11.5" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+function EmptyState({ icon, title, description }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-6 text-center">
+      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-white text-violet-600 shadow-sm">
+        <StatsIcon kind={icon} />
+      </div>
+      <p className="mt-4 text-sm font-semibold text-gray-900">{title}</p>
+      <p className="mt-2 text-sm text-gray-500">{description}</p>
     </div>
   );
 }
@@ -40,10 +95,10 @@ export default function PlayerStatsPage({
   return (
     <div className="space-y-8">
       <section className="rounded-2xl border border-violet-100 bg-gradient-to-r from-violet-600 via-indigo-500 to-sky-500 p-5 text-white shadow-sm sm:p-6">
-        <p className="text-sm font-medium text-violet-50">Player Stats</p>
-        <h2 className="mt-1 text-2xl font-bold">League and knockout performance in one place</h2>
+        <p className="text-sm font-medium text-violet-50">{playerStatsPageCopy.hero.eyebrow}</p>
+        <h2 className="mt-1 text-2xl font-bold">{playerStatsPageCopy.hero.title}</h2>
         <p className="mt-2 max-w-3xl text-sm text-indigo-50">
-          Browse all-time player results from completed sessions, with a simpler summary of activity, titles, and strongest partnerships.
+          {playerStatsPageCopy.hero.description}
         </p>
       </section>
 
@@ -51,8 +106,13 @@ export default function PlayerStatsPage({
         <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Players</p>
-              <h3 className="mt-1 text-lg font-semibold text-gray-900">Leaderboard</h3>
+              <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{playerStatsPageCopy.leaderboard.eyebrow}</p>
+              <div className="mt-1 flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-50 text-violet-600">
+                  <StatsIcon kind="leaderboard" />
+                </span>
+                <h3 className="text-lg font-semibold text-gray-900">{playerStatsPageCopy.leaderboard.title}</h3>
+              </div>
             </div>
             <button
               type="button"
@@ -60,7 +120,7 @@ export default function PlayerStatsPage({
               disabled={loading}
               className="inline-flex min-h-10 items-center justify-center rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
             >
-              {loading ? "Refreshing..." : "Refresh"}
+              {loading ? playerStatsPageCopy.leaderboard.refreshLoading : playerStatsPageCopy.leaderboard.refresh}
             </button>
           </div>
           <div className="mt-4 space-y-2">
@@ -83,20 +143,22 @@ export default function PlayerStatsPage({
                         <p className="mt-1 text-xs font-medium text-indigo-700">{player.short_name}</p>
                       ) : null}
                       <p className="mt-1 text-xs text-gray-500">
-                        {player.sessions_played} sessions • {player.matches_played} matches
+                        {player.sessions_played} {playerStatsPageCopy.leaderboard.sessionsSuffix} • {player.matches_played} {playerStatsPageCopy.leaderboard.matchesSuffix}
                       </p>
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-semibold text-indigo-700">{player.win_rate}%</p>
-                      <p className="mt-1 text-xs text-gray-500">{player.championships} titles</p>
+                      <p className="mt-1 text-xs text-gray-500">{player.championships} {playerStatsPageCopy.leaderboard.titlesSuffix}</p>
                     </div>
                   </div>
                 </button>
               ))
             ) : (
-              <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
-                Player stats will appear here after completed sessions are available.
-              </div>
+              <EmptyState
+                icon="leaderboard"
+                title={playerStatsPageCopy.leaderboard.emptyTitle}
+                description={playerStatsPageCopy.leaderboard.emptyDescription}
+              />
             )}
           </div>
         </section>
@@ -104,31 +166,41 @@ export default function PlayerStatsPage({
         <section className="space-y-6">
           {detailLoading ? (
             <div className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
-              <p className="text-sm text-gray-600">Loading player details...</p>
+              <p className="text-sm text-gray-600">{playerStatsPageCopy.profile.loading}</p>
             </div>
           ) : playerDetail ? (
             <>
               <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Profile</p>
-                <h3 className="mt-1 text-2xl font-bold text-gray-900">{playerDetail.full_name || playerDetail.player_name}</h3>
+                <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{playerStatsPageCopy.profile.eyebrow}</p>
+                <div className="mt-1 flex items-center gap-3">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                    <StatsIcon kind="profile" className="h-5 w-5" />
+                  </span>
+                  <h3 className="text-2xl font-bold text-gray-900">{playerDetail.full_name || playerDetail.player_name}</h3>
+                </div>
                 {playerDetail.short_name && playerDetail.short_name !== (playerDetail.full_name || playerDetail.player_name) ? (
                   <p className="mt-2 text-sm font-medium text-indigo-700">{playerDetail.short_name}</p>
                 ) : null}
                 <p className="mt-2 text-sm text-gray-600">
-                  Last completed session: {playerDetail.last_session_at ? formatDate(playerDetail.last_session_at) : "No completed sessions yet"}
+                  {playerStatsPageCopy.profile.lastSessionPrefix} {playerDetail.last_session_at ? formatDate(playerDetail.last_session_at) : playerStatsPageCopy.profile.noSessions}
                 </p>
               </div>
 
               <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                <MetricCard label="Sessions" value={playerDetail.sessions_played} tone="indigo" />
-                <MetricCard label="Matches" value={playerDetail.matches_played} tone="default" />
-                <MetricCard label="Win Rate" value={`${playerDetail.win_rate}%`} tone="emerald" />
-                <MetricCard label="Championships" value={playerDetail.championships} tone="amber" />
+                <MetricCard label={playerStatsPageCopy.metrics.sessions} value={playerDetail.sessions_played} tone="indigo" />
+                <MetricCard label={playerStatsPageCopy.metrics.matches} value={playerDetail.matches_played} tone="default" />
+                <MetricCard label={playerStatsPageCopy.metrics.winRate} value={`${playerDetail.win_rate}%`} tone="emerald" />
+                <MetricCard label={playerStatsPageCopy.metrics.championships} value={playerDetail.championships} tone="amber" />
               </div>
 
               <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Top Partners</p>
-                <h3 className="mt-1 text-lg font-semibold text-gray-900">Best-performing partners for {playerDetail.full_name || playerDetail.player_name}</h3>
+                <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{playerStatsPageCopy.partners.eyebrow}</p>
+                <div className="mt-1 flex items-center gap-3">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600">
+                    <StatsIcon kind="partners" />
+                  </span>
+                  <h3 className="text-lg font-semibold text-gray-900">{playerStatsPageCopy.partners.titlePrefix} {playerDetail.full_name || playerDetail.player_name}</h3>
+                </div>
                 <div className="mt-4 space-y-3">
                   {playerDetail.top_partners.length > 0 ? (
                     playerDetail.top_partners.map((partner, index) => (
@@ -140,27 +212,31 @@ export default function PlayerStatsPage({
                               <p className="mt-1 text-xs font-medium text-indigo-700">{partner.short_name}</p>
                             ) : null}
                             <p className="mt-2 text-sm text-gray-600">
-                              {partner.matches_played} matches together • {partner.wins} wins
+                              {partner.matches_played} {playerStatsPageCopy.partners.matchesTogetherSuffix} • {partner.wins} {playerStatsPageCopy.partners.winsSuffix}
                             </p>
                           </div>
                           <div className="rounded-full bg-indigo-100 px-3 py-2 text-sm font-semibold text-indigo-700">
-                            {partner.win_rate}% win rate
+                            {partner.win_rate}% {playerStatsPageCopy.partners.winRateSuffix}
                           </div>
                         </div>
                       </div>
                     ))
                   ) : (
-                    <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
-                      Not enough completed matches yet to rank partners.
-                    </div>
+                    <EmptyState
+                      icon="partners"
+                      title={playerStatsPageCopy.partners.emptyTitle}
+                      description={playerStatsPageCopy.partners.emptyDescription}
+                    />
                   )}
                 </div>
               </div>
             </>
           ) : (
-            <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-6 text-sm text-gray-500">
-              Select a player to view their historical league and knockout statistics.
-            </div>
+            <EmptyState
+              icon="profile"
+              title={playerStatsPageCopy.profile.emptyTitle}
+              description={playerStatsPageCopy.profile.emptyDescription}
+            />
           )}
         </section>
       </div>

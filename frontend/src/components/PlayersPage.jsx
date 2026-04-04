@@ -1,26 +1,72 @@
 import { useState } from "react";
+import { playersPageCopy } from "../content/uiCopy";
+
+function PlayersIcon({ kind, className = "h-5 w-5" }) {
+  const props = {
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: "1.8",
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+    className,
+    "aria-hidden": true,
+  };
+
+  switch (kind) {
+    case "add":
+      return (
+        <svg {...props}>
+          <path d="M12 12.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+          <path d="M5.5 19.5a6.5 6.5 0 0 1 8.2-6.2" />
+          <path d="M18 11v6M15 14h6" />
+        </svg>
+      );
+    case "directory":
+      return (
+        <svg {...props}>
+          <rect x="4.5" y="4.5" width="15" height="15" rx="2.5" />
+          <path d="M8 8h8M8 12h8M8 16h5" />
+        </svg>
+      );
+    default:
+      return null;
+  }
+}
+
+function EmptyState({ title, description }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-6 text-center">
+      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-white text-cyan-600 shadow-sm">
+        <PlayersIcon kind="directory" />
+      </div>
+      <p className="mt-4 text-sm font-semibold text-gray-900">{title}</p>
+      <p className="mt-2 text-sm text-gray-500">{description}</p>
+    </div>
+  );
+}
 
 function PlayerEditorFields({ draft, setDraft }) {
   return (
     <>
       <label className="block text-sm font-medium text-gray-700">
-        Full Name
+        {playersPageCopy.addPlayer.fullName}
         <input
           type="text"
           value={draft.fullName}
           onChange={(event) => setDraft((current) => ({ ...current, fullName: event.target.value }))}
-          placeholder="Arijit Mukherjee"
+          placeholder={playersPageCopy.addPlayer.fullNamePlaceholder}
           className="mt-2 block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-500"
         />
       </label>
 
       <label className="block text-sm font-medium text-gray-700">
-        Short Name
+        {playersPageCopy.addPlayer.shortName}
         <input
           type="text"
           value={draft.shortName}
           onChange={(event) => setDraft((current) => ({ ...current, shortName: event.target.value }))}
-          placeholder="Arijit"
+          placeholder={playersPageCopy.addPlayer.shortNamePlaceholder}
           className="mt-2 block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-500"
         />
       </label>
@@ -33,9 +79,14 @@ function PlayerEditor({ title, submitLabel, draft, setDraft, loading, error, onS
     <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
       <div>
         <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{title}</p>
-        <h3 className="mt-1 text-lg font-semibold text-gray-900">Player details</h3>
+        <div className="mt-1 flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600">
+            <PlayersIcon kind="add" />
+          </span>
+          <h3 className="text-lg font-semibold text-gray-900">{playersPageCopy.addPlayer.title}</h3>
+        </div>
         <p className="mt-2 text-sm text-gray-600">
-          Full name is for the directory. Short name is what shows up in the roster and scoring flow.
+          {playersPageCopy.addPlayer.description}
         </p>
       </div>
 
@@ -84,10 +135,10 @@ function EditPlayerDialog({ player, open, loading, error, draft, setDraft, onCan
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
       <div className="w-full max-w-lg rounded-2xl border border-cyan-200 bg-white p-5 shadow-xl">
-        <p className="text-sm font-semibold uppercase tracking-wide text-cyan-600">Edit Player</p>
-        <h3 className="mt-1 text-xl font-semibold text-gray-900">Update player details</h3>
+        <p className="text-sm font-semibold uppercase tracking-wide text-cyan-600">{playersPageCopy.editPlayer.eyebrow}</p>
+        <h3 className="mt-1 text-xl font-semibold text-gray-900">{playersPageCopy.editPlayer.title}</h3>
         <p className="mt-2 text-sm text-gray-600">
-          This keeps the player ID stable while updating how the player appears in Planner, scoring, and the directory.
+          {playersPageCopy.editPlayer.description}
         </p>
 
         <form
@@ -119,7 +170,7 @@ function EditPlayerDialog({ player, open, loading, error, draft, setDraft, onCan
               disabled={loading || !draft.fullName.trim() || !draft.shortName.trim()}
               className="inline-flex min-h-11 items-center justify-center rounded-xl bg-cyan-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-cyan-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
             >
-              {loading ? "Saving..." : "Save Changes"}
+              {loading ? playersPageCopy.editPlayer.submitLoading : playersPageCopy.editPlayer.submit}
             </button>
           </div>
         </form>
@@ -143,28 +194,28 @@ function DeletePlayerDialog({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4">
       <div className="w-full max-w-lg rounded-2xl border border-rose-200 bg-white p-5 shadow-xl">
-        <p className="text-sm font-semibold uppercase tracking-wide text-rose-600">Delete Player</p>
-        <h3 className="mt-1 text-xl font-semibold text-gray-900">This action is intentionally strict</h3>
+        <p className="text-sm font-semibold uppercase tracking-wide text-rose-600">{playersPageCopy.deletePlayer.eyebrow}</p>
+        <h3 className="mt-1 text-xl font-semibold text-gray-900">{playersPageCopy.deletePlayer.title}</h3>
         <div className="mt-4 rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
           <p className="font-semibold">
-            You are deleting <span className="font-bold">{player.full_name}</span> from the player directory.
+            {playersPageCopy.deletePlayer.descriptionLead} <span className="font-bold">{player.full_name}</span> {playersPageCopy.deletePlayer.descriptionMiddle}
           </p>
           <p className="mt-2">
-            This hides the player from Planner and Player Management. Existing sessions are not removed automatically.
+            {playersPageCopy.deletePlayer.descriptionOne}
           </p>
           <p className="mt-2">
-            If you also tick the historical option below, player analytics records will be deleted as well. Use that only if you truly want to remove the player from historical stats.
+            {playersPageCopy.deletePlayer.descriptionTwo}
           </p>
         </div>
 
         <div className="mt-5 space-y-4">
           <label className="block text-sm font-medium text-gray-700">
-            Admin token
+            {playersPageCopy.deletePlayer.tokenLabel}
             <input
               type="password"
               value={draft.adminToken}
               onChange={(event) => setDraft((current) => ({ ...current, adminToken: event.target.value }))}
-              placeholder="Enter ADMIN_RECOVERY_TOKEN"
+              placeholder={playersPageCopy.deletePlayer.tokenPlaceholder}
               className="mt-2 block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-rose-500"
             />
           </label>
@@ -177,7 +228,7 @@ function DeletePlayerDialog({
               className="mt-1 h-4 w-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500"
             />
             <span>
-              Also delete historical player records
+              {playersPageCopy.deletePlayer.deleteHistory}
             </span>
           </label>
 
@@ -195,7 +246,7 @@ function DeletePlayerDialog({
             disabled={loading}
             className="inline-flex min-h-11 items-center justify-center rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
           >
-            Cancel
+            {playersPageCopy.deletePlayer.cancel}
           </button>
           <button
             type="button"
@@ -203,7 +254,7 @@ function DeletePlayerDialog({
             disabled={loading || !draft.adminToken.trim()}
             className="inline-flex min-h-11 items-center justify-center rounded-xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
           >
-            {loading ? "Deleting..." : "Delete Player"}
+            {loading ? playersPageCopy.deletePlayer.submitLoading : playersPageCopy.deletePlayer.submit}
           </button>
         </div>
       </div>
@@ -278,18 +329,18 @@ export default function PlayersPage({
   return (
     <div className="space-y-8">
       <section className="rounded-2xl border border-cyan-100 bg-gradient-to-r from-cyan-600 via-sky-500 to-indigo-500 p-5 text-white shadow-sm sm:p-6">
-        <p className="text-sm font-medium text-cyan-50">Players</p>
-        <h2 className="mt-1 text-2xl font-bold">Build a clean player directory once</h2>
+        <p className="text-sm font-medium text-cyan-50">{playersPageCopy.hero.eyebrow}</p>
+        <h2 className="mt-1 text-2xl font-bold">{playersPageCopy.hero.title}</h2>
         <p className="mt-2 max-w-3xl text-sm text-sky-50">
-          Register full names and short names here, then reuse them in Planner without retyping. This reduces typos and gives every player a stable ID.
+          {playersPageCopy.hero.description}
         </p>
       </section>
 
       <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
         <div className="space-y-6">
           <PlayerEditor
-            title="Add Player"
-            submitLabel="Create Player"
+            title={playersPageCopy.addPlayer.eyebrow}
+            submitLabel={playersPageCopy.addPlayer.submit}
             draft={draft}
             setDraft={setDraft}
             loading={createLoading}
@@ -301,10 +352,15 @@ export default function PlayersPage({
         <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">Directory</p>
-              <h3 className="mt-1 text-lg font-semibold text-gray-900">Registered players</h3>
+              <p className="text-sm font-semibold uppercase tracking-wide text-gray-500">{playersPageCopy.directory.eyebrow}</p>
+              <div className="mt-1 flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cyan-50 text-cyan-600">
+                  <PlayersIcon kind="directory" />
+                </span>
+                <h3 className="text-lg font-semibold text-gray-900">{playersPageCopy.directory.title}</h3>
+              </div>
               <p className="mt-2 text-sm text-gray-600">
-                Existing session and analytics names are imported automatically, so the directory can start with legacy players already filled in.
+                {playersPageCopy.directory.description}
               </p>
             </div>
             <button
@@ -313,7 +369,7 @@ export default function PlayersPage({
               disabled={loading}
               className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
             >
-              {loading ? "Refreshing..." : "Refresh Players"}
+              {loading ? playersPageCopy.directory.refreshLoading : playersPageCopy.directory.refresh}
             </button>
           </div>
 
@@ -333,7 +389,7 @@ export default function PlayersPage({
                       </div>
                       {player.aliases?.length > 0 ? (
                         <p className="mt-3 text-xs text-gray-500">
-                          Also matched from older names: {player.aliases.join(", ")}
+                          {playersPageCopy.directory.aliasesPrefix} {player.aliases.join(", ")}
                         </p>
                       ) : null}
                     </div>
@@ -343,7 +399,7 @@ export default function PlayersPage({
                         onClick={() => beginEdit(player)}
                         className="inline-flex min-h-10 items-center justify-center rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-700 transition-colors hover:bg-cyan-100"
                       >
-                        Edit
+                        {playersPageCopy.directory.edit}
                       </button>
                       <button
                         type="button"
@@ -353,16 +409,17 @@ export default function PlayersPage({
                         }}
                         className="inline-flex min-h-10 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
                       >
-                        Delete
+                        {playersPageCopy.directory.delete}
                       </button>
                     </div>
                   </div>
                 </div>
               ))
             ) : (
-              <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
-                No players yet. Add the first player from the form on the left.
-              </div>
+              <EmptyState
+                title={playersPageCopy.directory.emptyTitle}
+                description={playersPageCopy.directory.emptyDescription}
+              />
             )}
           </div>
         </section>
