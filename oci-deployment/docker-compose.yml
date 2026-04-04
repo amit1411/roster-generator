@@ -1,0 +1,57 @@
+services:
+  proxy:
+    image: caddy:2.9-alpine
+    container_name: badminton-roster-proxy
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_started
+    ports:
+      - "${PROXY_HTTP_PORT:-80}:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+
+  db:
+    image: postgres:16
+    container_name: badminton-roster-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  backend:
+    build:
+      context: ..
+      dockerfile: oci-deployment/backend.Dockerfile
+    container_name: badminton-roster-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      CACHE_ENABLED: ${CACHE_ENABLED:-true}
+      CACHE_BACKEND: ${CACHE_BACKEND:-memory}
+      REDIS_URL: ${REDIS_URL:-}
+      ADMIN_RECOVERY_TOKEN: ${ADMIN_RECOVERY_TOKEN}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      BACKEND_WORKERS: ${BACKEND_WORKERS:-2}
+    command:
+      - /bin/sh
+      - -lc
+      - gunicorn app:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --workers "${BACKEND_WORKERS:-2}" --timeout 120
+
+volumes:
+  postgres-data:
