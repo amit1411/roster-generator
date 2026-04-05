@@ -1,6 +1,6 @@
-# Badminton Roster Generator
+# Badminton Session Planner
 
-A web app for generating balanced badminton doubles rosters with constraint-based scheduling.
+A web app for planning badminton doubles sessions, running live scoring, and reviewing completed-session history and player stats.
 
 ## Project Docs
 
@@ -32,11 +32,10 @@ cd backend
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-export DATABASE_URL="postgresql+psycopg://postgres:postgres@localhost:5433/badminton_roster"
 uvicorn app:app --reload --port 8000
 ```
 
-If you prefer, copy `backend/.env.example` and export the same value from your shell before starting the backend.
+If you prefer, copy `backend/.env.example`. The backend now loads `backend/.env` automatically for local development.
 
 ### Frontend (React + Vite)
 
@@ -62,9 +61,14 @@ docker compose down -v
 
 ## Features
 
-- Add/remove players and define fixed pairs
-- Configure courts, rounds, consecutive game limits, pair settings
-- Fixed pairs only play together after a configurable start round (default: round 5)
-- Balanced rest distribution across all players
-- Download generated roster as CSV
-- Constraint violation reporting
+- Player directory with stable IDs, editable names, and soft-delete/restore behavior
+- Planner wizard with player selection from the directory and tap-to-pair UX
+- Organizer-token-gated session creation
+- Active Sessions page for ongoing sessions
+- History page for completed sessions only
+- Player Stats page with completed-session analytics
+- Round-robin and league+knockout session formats
+- Live scoring, standings, bracket, and final results
+- Session rename, share links, and view-only/scorer access separation
+- Optional backend caching with memory or Redis
+- Playwright E2E coverage for desktop, mobile, and opt-in staging runs

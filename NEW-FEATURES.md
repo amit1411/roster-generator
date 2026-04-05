@@ -1,22 +1,38 @@
 ## TODO NEXT
 
+- Real login/roles to replace temporary token-based organizer/admin safeguards
+- Better top-level route persistence if the app eventually moves beyond state-only section navigation
+- Safer/admin-friendly backfill or repair tooling for historical analytics on staging/prod
 
 ## BACKLOG
 
 - Realtime sync with WebSockets
 - Player replacement mid-session
+- Dedicated migration/backfill command for completed-session analytics
+- Richer completed-session detail / summary surfaces
 
 ## Completed Features
 
--  View-only vs scorer links with env variable ADMIN_RECOVERY_TOKEN
-    - Should be tied to login and roles (admin)
+- View-only vs scorer links with `ADMIN_RECOVERY_TOKEN` fallback recovery access
 - Tournament summary / results page
-- Rename session
-- Historical data and player stats
-Requirements:
-- Think about UX/UI best experience for the end user.
-- Keep the routing and functionality to be compatible with render.com platform hosting. DOnt change routing if its too complex.
-- Move Active Sessions to a new section/page to show existing sessions. Keep planner only for generating a new roster and starting sessions.
-- Creat a new page for historical sessions. This should only have completed sessions to open the results with an optional delete button.
-- New Player stats page with details about player statistics. The statistics should include both league and knockout stages stats.
-- Update the E2E tests and run for all scenarios.
+- Rename session from session list and scoring header
+- Historical sessions page with completed sessions only
+- Player stats page with completed-session analytics across league and knockout
+- Active Sessions split away from Planner
+- Player directory management
+  - stable `player_id`
+  - create/edit/delete
+  - soft-delete restore on recreate
+- Planner redesign
+  - directory-driven player selection
+  - tap-to-pair UX
+  - stale roster detection before start
+  - organizer-token check before session creation
+- Mobile UX improvements
+  - menu-based top-level navigation
+  - player stats master/detail flow
+- Optional caching layer
+  - in-memory or Redis
+- Expanded Playwright coverage
+  - desktop and mobile
+  - local isolated DB and opt-in staging runs
