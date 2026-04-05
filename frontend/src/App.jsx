@@ -1730,7 +1730,7 @@ export default function App() {
               <div className="fixed inset-0 z-40 bg-slate-900/35" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />
               <nav
                 id="mobile-global-nav"
-                className="fixed inset-x-4 top-[5.75rem] z-50 rounded-3xl border border-gray-200 bg-white p-3 shadow-2xl"
+                className="fixed inset-x-4 top-[6.5rem] z-50 rounded-3xl border border-gray-200 bg-white p-3 shadow-2xl"
               >
                 <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-[0.24em] text-gray-400">Navigate</p>
                 <div className="grid gap-2">

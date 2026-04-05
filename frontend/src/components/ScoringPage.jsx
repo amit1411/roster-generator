@@ -555,7 +555,7 @@ function PanelTabs({ activePanel, onChange, hasBracket, showSummary }) {
   ];
 
   return (
-    <div className="sticky top-20 z-20 -mx-1 rounded-2xl border border-gray-200 bg-white/95 p-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/80 md:static md:mx-0 md:bg-white md:p-2 md:backdrop-blur-0">
+    <div className="sticky top-[6.5rem] z-20 -mx-1 rounded-2xl border border-gray-200 bg-white/95 p-2 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/80 md:static md:mx-0 md:bg-white md:p-2 md:backdrop-blur-0">
       <div className="grid grid-cols-2 gap-2 sm:grid-flow-col sm:auto-cols-fr">
         {tabs.map((tab) => (
           <button
