@@ -70,12 +70,6 @@ function PlayerTile({ player, actionLabel, onAction, selected = false, muted = f
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-gray-900">{player.fullName}</p>
-          <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-500">
-            <span className="rounded-full bg-white/80 px-2 py-1 font-medium text-gray-600">
-              {player.shortName}
-            </span>
-            <span className="rounded-full bg-gray-100 px-2 py-1">{player.playerId}</span>
-          </div>
         </div>
         <button
           type="button"
@@ -261,10 +255,6 @@ export default function PlayerInput({
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-gray-900">{player.fullName}</p>
                         <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-500">
-                          <span className="rounded-full bg-white/80 px-2 py-1 font-medium text-gray-600">
-                            {player.shortName}
-                          </span>
-                          <span className="rounded-full bg-white/80 px-2 py-1">{player.playerId}</span>
                           {partner ? (
                             <span className="rounded-full bg-white/80 px-2 py-1 font-medium text-indigo-700">
                               {playerInputCopy.sessionPlayers.pairedWith} {partner.shortName}

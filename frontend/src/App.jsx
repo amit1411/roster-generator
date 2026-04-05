@@ -789,6 +789,17 @@ function normalizePlayerDetail(detail) {
 
   return {
     ...normalizePlayerSummary(detail),
+    mostPlayedPartner: detail.most_played_partner
+      ? {
+          partnerId: detail.most_played_partner.partner_id || null,
+          fullName: detail.most_played_partner.full_name || detail.most_played_partner.partner_name,
+          shortName: detail.most_played_partner.short_name || detail.most_played_partner.partner_name,
+          partnerName: detail.most_played_partner.partner_name,
+          matchesPlayed: detail.most_played_partner.matches_played,
+          wins: detail.most_played_partner.wins,
+          winRate: detail.most_played_partner.win_rate,
+        }
+      : null,
     topPartners: Array.isArray(detail.top_partners)
       ? detail.top_partners.map((partner) => ({
           partnerId: partner.partner_id || null,
@@ -1656,7 +1667,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <header className="sticky top-0 z-10 border-b border-gray-200 bg-white/95 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between gap-3">
             <button
@@ -1719,7 +1730,7 @@ export default function App() {
               <div className="fixed inset-0 z-40 bg-slate-900/35" onClick={() => setMobileNavOpen(false)} aria-hidden="true" />
               <nav
                 id="mobile-global-nav"
-                className="absolute inset-x-4 top-[calc(100%+0.75rem)] z-50 rounded-3xl border border-gray-200 bg-white p-3 shadow-2xl"
+                className="fixed inset-x-4 top-[5.75rem] z-50 rounded-3xl border border-gray-200 bg-white p-3 shadow-2xl"
               >
                 <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-[0.24em] text-gray-400">Navigate</p>
                 <div className="grid gap-2">
@@ -2081,9 +2092,21 @@ export default function App() {
                     player_name: playerStatsDetail.playerName,
                     sessions_played: playerStatsDetail.sessionsPlayed,
                     matches_played: playerStatsDetail.matchesPlayed,
+                    wins: playerStatsDetail.wins,
                     win_rate: playerStatsDetail.winRate,
                     championships: playerStatsDetail.championships,
                     last_session_at: playerStatsDetail.lastSessionAt,
+                    most_played_partner: playerStatsDetail.mostPlayedPartner
+                      ? {
+                          partner_id: playerStatsDetail.mostPlayedPartner.partnerId,
+                          full_name: playerStatsDetail.mostPlayedPartner.fullName,
+                          short_name: playerStatsDetail.mostPlayedPartner.shortName,
+                          partner_name: playerStatsDetail.mostPlayedPartner.partnerName,
+                          matches_played: playerStatsDetail.mostPlayedPartner.matchesPlayed,
+                          wins: playerStatsDetail.mostPlayedPartner.wins,
+                          win_rate: playerStatsDetail.mostPlayedPartner.winRate,
+                        }
+                      : null,
                     top_partners: playerStatsDetail.topPartners.map((partner) => ({
                       partner_id: partner.partnerId,
                       full_name: partner.fullName,

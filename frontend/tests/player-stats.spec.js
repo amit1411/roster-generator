@@ -15,7 +15,9 @@ test("player stats page shows completed-session analytics", async ({ page, reque
   await expect(profileSection.getByRole("heading", { name: "A", exact: true })).toBeVisible();
   await expect(profileSection.getByText("Sessions", { exact: true })).toBeVisible();
   await expect(profileSection.getByText("Matches", { exact: true })).toBeVisible();
+  await expect(profileSection.getByText(/\d+ wins/, { exact: false }).first()).toBeVisible();
   await expect(profileSection.getByText("Last completed session:", { exact: false })).toBeVisible();
+  await expect(profileSection.getByText("Most-played partner", { exact: true })).toBeVisible();
   await expect(profileSection.getByText("Best-performing partners for A")).toBeVisible();
   await expect(profileSection.getByText("% win rate", { exact: false }).first()).toBeVisible();
 });

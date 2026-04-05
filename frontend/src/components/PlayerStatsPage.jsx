@@ -1,6 +1,6 @@
 import { playerStatsPageCopy } from "../content/uiCopy";
 
-function MetricCard({ label, value, tone = "default" }) {
+function MetricCard({ label, value, detail = null, tone = "default" }) {
   const tones = {
     default: "border-slate-200 bg-white text-slate-900",
     indigo: "border-indigo-200 bg-indigo-50 text-indigo-900",
@@ -12,6 +12,7 @@ function MetricCard({ label, value, tone = "default" }) {
     <div className={`rounded-2xl border p-4 shadow-sm ${tones[tone]}`}>
       <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">{label}</p>
       <p className="mt-2 text-lg font-semibold">{value}</p>
+      {detail ? <p className="mt-1 text-sm font-medium text-slate-700">{detail}</p> : null}
     </div>
   );
 }
@@ -193,7 +194,12 @@ export default function PlayerStatsPage({
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <MetricCard label={playerStatsPageCopy.metrics.sessions} value={playerDetail.sessions_played} tone="indigo" />
-          <MetricCard label={playerStatsPageCopy.metrics.matches} value={playerDetail.matches_played} tone="default" />
+          <MetricCard
+            label={playerStatsPageCopy.metrics.matches}
+            value={playerDetail.matches_played}
+            detail={`${playerDetail.wins} ${playerStatsPageCopy.metrics.winsSuffix}`}
+            tone="default"
+          />
           <MetricCard label={playerStatsPageCopy.metrics.winRate} value={`${playerDetail.win_rate}%`} tone="emerald" />
           <MetricCard label={playerStatsPageCopy.metrics.championships} value={playerDetail.championships} tone="amber" />
         </div>
@@ -206,6 +212,37 @@ export default function PlayerStatsPage({
             </span>
             <h3 className="text-lg font-semibold text-gray-900">{playerStatsPageCopy.partners.titlePrefix} {playerDetail.full_name || playerDetail.player_name}</h3>
           </div>
+          {playerDetail.most_played_partner ? (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                {playerStatsPageCopy.partners.mostPlayedLabel}
+              </p>
+              <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">
+                    {playerDetail.most_played_partner.full_name || playerDetail.most_played_partner.partner_name}
+                  </p>
+                  {playerDetail.most_played_partner.short_name &&
+                  playerDetail.most_played_partner.short_name !==
+                    (playerDetail.most_played_partner.full_name || playerDetail.most_played_partner.partner_name) ? (
+                    <p className="mt-1 text-xs font-medium text-indigo-700">
+                      {playerDetail.most_played_partner.short_name}
+                    </p>
+                  ) : null}
+                  <p className="mt-2 text-sm text-gray-600">
+                    {playerStatsPageCopy.partners.mostPlayedDescription}
+                  </p>
+                  <p className="mt-2 text-sm text-gray-700">
+                    {playerDetail.most_played_partner.matches_played} {playerStatsPageCopy.partners.matchesTogetherSuffix} •{" "}
+                    {playerDetail.most_played_partner.wins} {playerStatsPageCopy.partners.winsSuffix}
+                  </p>
+                </div>
+                <div className="rounded-full bg-white px-3 py-2 text-sm font-semibold text-emerald-700">
+                  {playerDetail.most_played_partner.win_rate}% {playerStatsPageCopy.partners.winRateSuffix}
+                </div>
+              </div>
+            </div>
+          ) : null}
           <div className="mt-4 space-y-3">
             {playerDetail.top_partners.length > 0 ? (
               playerDetail.top_partners.map((partner, index) => (

@@ -275,10 +275,25 @@ export default function PlayersPage({
   onDeletePlayer,
 }) {
   const [draft, setDraft] = useState({ fullName: "", shortName: "" });
+  const [searchQuery, setSearchQuery] = useState("");
   const [editingPlayerId, setEditingPlayerId] = useState(null);
   const [editDraft, setEditDraft] = useState({ fullName: "", shortName: "" });
   const [deletingPlayer, setDeletingPlayer] = useState(null);
   const [deleteDraft, setDeleteDraft] = useState({ adminToken: "", deleteHistory: false });
+  const normalizedSearch = searchQuery.trim().toLowerCase();
+  const filteredPlayers = players.filter((player) => {
+    const haystack = [
+      player.full_name,
+      player.short_name,
+      player.player_id,
+      player.source,
+      ...(Array.isArray(player.aliases) ? player.aliases : []),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    return haystack.includes(normalizedSearch);
+  });
 
   function submitCreate() {
     if (!draft.fullName.trim() || !draft.shortName.trim()) return;
@@ -374,8 +389,15 @@ export default function PlayersPage({
           </div>
 
           <div className="mt-5 space-y-3 border-t border-gray-100 pt-4">
-            {players.length > 0 ? (
-              players.map((player) => (
+            <input
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={playersPageCopy.directory.searchPlaceholder}
+              className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            />
+            {filteredPlayers.length > 0 ? (
+              filteredPlayers.map((player) => (
                 <div key={player.player_id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0">
@@ -417,8 +439,12 @@ export default function PlayersPage({
               ))
             ) : (
               <EmptyState
-                title={playersPageCopy.directory.emptyTitle}
-                description={playersPageCopy.directory.emptyDescription}
+                title={players.length > 0 ? playersPageCopy.directory.noMatchTitle : playersPageCopy.directory.emptyTitle}
+                description={
+                  players.length > 0
+                    ? playersPageCopy.directory.noMatchDescription
+                    : playersPageCopy.directory.emptyDescription
+                }
               />
             )}
           </div>

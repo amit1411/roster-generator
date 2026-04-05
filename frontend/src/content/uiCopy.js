@@ -123,8 +123,11 @@ export const playersPageCopy = {
     title: "Registered players",
     description:
       "Registered Players in the club.",
+    searchPlaceholder: "Search players...",
     refresh: "Refresh Players",
     refreshLoading: "Refreshing...",
+    noMatchTitle: "No players match this search",
+    noMatchDescription: "Try a full name, short name, alias, or player ID.",
     emptyTitle: "No players yet",
     emptyDescription: "Add the first player from the form on the left, then they will appear here for quick management.",
     aliasesPrefix: "Also matched from older names:",
@@ -201,12 +204,15 @@ export const playerStatsPageCopy = {
   metrics: {
     sessions: "Sessions",
     matches: "Matches",
+    winsSuffix: "wins",
     winRate: "Win Rate",
     championships: "Championships",
   },
   partners: {
     eyebrow: "Top Partners",
     titlePrefix: "Best-performing partners for",
+    mostPlayedLabel: "Most-played partner",
+    mostPlayedDescription: "The teammate they've played with most often.",
     matchesTogetherSuffix: "matches together",
     winsSuffix: "wins",
     winRateSuffix: "win rate",

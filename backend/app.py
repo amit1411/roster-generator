@@ -259,6 +259,7 @@ class PartnerStatsResponse(BaseModel):
 
 
 class PlayerStatsDetailResponse(PlayerStatsSummaryResponse):
+    most_played_partner: PartnerStatsResponse | None = None
     top_partners: list[PartnerStatsResponse]
 
 
@@ -1944,28 +1945,36 @@ def get_player_stats(player_name: str):
                 partner_totals[partner_row.partner_name]["wins"] += partner_row.wins
                 partner_totals[partner_row.partner_name]["matches"] += partner_row.matches_played
 
-            top_partners = sorted(
+            ranked_partners = [
                 (
-                    (
-                        lambda partner: {
-                            "partner_id": partner.player_id if partner else None,
-                            "full_name": partner.full_name if partner else partner_name,
-                            "short_name": partner.short_name if partner else partner_name,
-                            "partner_name": partner_name,
-                            "matches_played": totals["matches"],
-                            "wins": totals["wins"],
-                            "win_rate": round((totals["wins"] / totals["matches"]) * 100, 1) if totals["matches"] else 0.0,
-                        }
-                    )(_find_player_by_name(db, partner_name))
-                    for partner_name, totals in partner_totals.items()
-                    if totals["matches"] > 0
-                ),
+                    lambda partner: {
+                        "partner_id": partner.player_id if partner else None,
+                        "full_name": partner.full_name if partner else partner_name,
+                        "short_name": partner.short_name if partner else partner_name,
+                        "partner_name": partner_name,
+                        "matches_played": totals["matches"],
+                        "wins": totals["wins"],
+                        "win_rate": round((totals["wins"] / totals["matches"]) * 100, 1) if totals["matches"] else 0.0,
+                    }
+                )(_find_player_by_name(db, partner_name))
+                for partner_name, totals in partner_totals.items()
+                if totals["matches"] > 0
+            ]
+
+            top_partners = sorted(
+                ranked_partners,
                 key=lambda item: (-item["win_rate"], -item["wins"], -item["matches_played"], item["partner_name"]),
             )[:3]
+            most_played_partner = min(
+                ranked_partners,
+                key=lambda item: (-item["matches_played"], -item["wins"], -item["win_rate"], item["partner_name"]),
+                default=None,
+            )
 
             summary = _to_player_stats_summary_response(db, row)
             return PlayerStatsDetailResponse(
                 **summary.model_dump(),
+                most_played_partner=PartnerStatsResponse(**most_played_partner) if most_played_partner else None,
                 top_partners=[PartnerStatsResponse(**partner) for partner in top_partners],
             )
 
