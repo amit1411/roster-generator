@@ -311,6 +311,11 @@ class ScoreMutationResponse(BaseModel):
     version: int
 
 
+class SessionMutationResponse(BaseModel):
+    ok: bool = True
+    version: int
+
+
 class PlayerCreateRequest(BaseModel):
     full_name: str
     short_name: str
@@ -1596,7 +1601,20 @@ def _apply_score_update(db, session_id: str, payload: dict, req: ScoreUpdateRequ
     return True
 
 
-def _update_session_record(session_id: str, updater, edit_token: str | None = None, response_builder=None):
+def _build_session_mutation_response(record: SharedSessionRecord, db=None) -> SessionMutationResponse:
+    return SessionMutationResponse(version=record.version)
+
+
+def _update_session_record(
+    session_id: str,
+    updater,
+    edit_token: str | None = None,
+    response_builder=None,
+    *,
+    sync_completed_stats: str = "always",
+    invalidate_analytics: str = "always",
+    refresh_record: bool = True,
+):
     for attempt in range(3):
         try:
             with get_db_session() as db:
@@ -1611,6 +1629,9 @@ def _update_session_record(session_id: str, updater, edit_token: str | None = No
                 next_payload = _upgrade_session_payload(deepcopy(record.data))
                 next_payload = _hydrate_legacy_session_storage(db, record, next_payload)
                 _require_edit_access(next_payload, edit_token)
+                completion_before = None
+                if sync_completed_stats == "on_completion_change" or invalidate_analytics == "on_completion_change":
+                    completion_before = _get_session_completion_state(db, record, next_payload)
                 changed = updater(db, record, next_payload)
                 if changed is False:
                     return (
@@ -1623,14 +1644,33 @@ def _update_session_record(session_id: str, updater, edit_token: str | None = No
                 record.version += 1
                 db.add(record)
                 db.flush()
-                db.refresh(record)
-                _sync_completed_session_stats(db, record, next_payload)
+                if refresh_record:
+                    db.refresh(record)
+
+                completion_after = None
+                analytics_changed = False
+                if sync_completed_stats == "always":
+                    _sync_completed_session_stats(db, record, next_payload)
+                    analytics_changed = True
+                elif sync_completed_stats == "on_completion_change":
+                    completion_after = _get_session_completion_state(db, record, next_payload)
+                    analytics_changed = completion_before is not None and (
+                        completion_before["completed"] != completion_after["completed"]
+                    )
+                    if analytics_changed:
+                        _sync_completed_session_stats(db, record, next_payload)
+
                 response = (
                     response_builder(record, db)
                     if response_builder
                     else _serialize_session(record, edit_token=edit_token, db=db)
                 )
-                _invalidate_session_views(session_id)
+                include_analytics = True
+                if invalidate_analytics == "never":
+                    include_analytics = False
+                elif invalidate_analytics == "on_completion_change":
+                    include_analytics = analytics_changed
+                _invalidate_session_views(session_id, include_analytics=include_analytics)
                 return response
         except OperationalError as exc:
             message = str(exc).lower()
@@ -2032,7 +2072,7 @@ def rename_shared_session(session_id: str, req: SessionRenameRequest, edit_token
     return _update_session_record(session_id, updater, edit_token=edit_token)
 
 
-@app.post("/api/sessions/{session_id}/start-round", response_model=SharedSessionResponse)
+@app.post("/api/sessions/{session_id}/start-round", response_model=SessionMutationResponse)
 def start_round(session_id: str, req: RoundStartRequest, edit_token: str | None = None):
     def updater(db, record, payload: dict):
         if req.stage == "league":
@@ -2059,10 +2099,18 @@ def start_round(session_id: str, req: RoundStartRequest, edit_token: str | None 
         db.add(round_record)
         return True
 
-    return _update_session_record(session_id, updater, edit_token=edit_token)
+    return _update_session_record(
+        session_id,
+        updater,
+        edit_token=edit_token,
+        response_builder=_build_session_mutation_response,
+        sync_completed_stats="never",
+        invalidate_analytics="never",
+        refresh_record=False,
+    )
 
 
-@app.post("/api/sessions/{session_id}/end-round", response_model=SharedSessionResponse)
+@app.post("/api/sessions/{session_id}/end-round", response_model=SessionMutationResponse)
 def end_round(session_id: str, req: RoundEndRequest, edit_token: str | None = None):
     def updater(db, record, payload: dict):
         if req.stage == "league":
@@ -2103,7 +2151,15 @@ def end_round(session_id: str, req: RoundEndRequest, edit_token: str | None = No
         db.add(round_record)
         return True
 
-    return _update_session_record(session_id, updater, edit_token=edit_token)
+    return _update_session_record(
+        session_id,
+        updater,
+        edit_token=edit_token,
+        response_builder=_build_session_mutation_response,
+        sync_completed_stats="on_completion_change",
+        invalidate_analytics="on_completion_change",
+        refresh_record=False,
+    )
 
 
 @app.post("/api/sessions/{session_id}/undo", response_model=SharedSessionResponse)
@@ -2119,7 +2175,7 @@ def undo_last_change(session_id: str, edit_token: str | None = None):
     return _update_session_record(session_id, updater, edit_token=edit_token)
 
 
-@app.post("/api/sessions/{session_id}/edit-round", response_model=SharedSessionResponse)
+@app.post("/api/sessions/{session_id}/edit-round", response_model=SessionMutationResponse)
 def edit_round(session_id: str, req: RoundEditRequest, edit_token: str | None = None):
     def updater(db, record, payload: dict):
         if req.stage == "league":
@@ -2183,7 +2239,15 @@ def edit_round(session_id: str, req: RoundEditRequest, edit_token: str | None = 
         db.add(round_record)
         return True
 
-    return _update_session_record(session_id, updater, edit_token=edit_token)
+    return _update_session_record(
+        session_id,
+        updater,
+        edit_token=edit_token,
+        response_builder=_build_session_mutation_response,
+        sync_completed_stats="on_completion_change",
+        invalidate_analytics="on_completion_change",
+        refresh_record=False,
+    )
 
 
 @app.post("/api/sessions/{session_id}/score", response_model=ScoreMutationResponse)

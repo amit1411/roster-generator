@@ -38,9 +38,12 @@ const VIEW_STORAGE_KEY = "badminton-roster:view";
 const ORGANIZER_TOKEN_STORAGE_KEY = "badminton-roster:organizer-token";
 const SESSION_POLL_INTERVAL_MS = 12000;
 const ACTIVE_EDIT_GRACE_MS = 15000;
+const SCORE_SAVE_DEBOUNCE_MS = 800;
+const SCORE_SAVED_FEEDBACK_MS = 2000;
 const PLAIN_SESSION_WAIT_LABELS = new Set([
   "Ending round...",
   "Re-opening round...",
+  "Refreshing rankings...",
   "Refreshing session...",
 ]);
 
@@ -324,6 +327,94 @@ function mergePendingScoreEdits(session, pendingEdits) {
   });
 
   return nextSession;
+}
+
+function isSessionComplete(session) {
+  if (!session) return false;
+
+  const leagueComplete =
+    Array.isArray(session.endedLeagueRounds) &&
+    session.roster?.rounds?.length > 0 &&
+    session.endedLeagueRounds.slice(0, session.roster.rounds.length).every(Boolean);
+
+  if (session.drawConfig?.draw_type !== "league_knockout") {
+    return leagueComplete;
+  }
+
+  if (!leagueComplete) return false;
+
+  const knockoutRounds = buildKnockoutRounds(
+    session.drawConfig,
+    session.roster,
+    session.leagueScoresByRound,
+    session.knockoutScoresByRound,
+    session.endedLeagueRounds,
+    session.endedKnockoutRounds
+  );
+
+  return knockoutRounds.length === 0 || session.endedKnockoutRounds.slice(0, knockoutRounds.length).every(Boolean);
+}
+
+function applyLocalRoundMutation(session, stage, roundIndex, action, nextVersion) {
+  if (!session) return session;
+
+  if (action === "start") {
+    if (stage === "league") {
+      return normalizeSession({
+        ...session,
+        activeLeagueRound: Math.max(session.activeLeagueRound, roundIndex),
+        version: nextVersion ?? session.version,
+      });
+    }
+
+    return normalizeSession({
+      ...session,
+      activeKnockoutRound: Math.max(session.activeKnockoutRound, roundIndex),
+      version: nextVersion ?? session.version,
+    });
+  }
+
+  if (action === "end") {
+    if (stage === "league") {
+      return normalizeSession({
+        ...session,
+        endedLeagueRounds: session.endedLeagueRounds.map((ended, index) => (index === roundIndex ? true : ended)),
+        version: nextVersion ?? session.version,
+      });
+    }
+
+    return normalizeSession({
+      ...session,
+      endedKnockoutRounds: session.endedKnockoutRounds.map((ended, index) => (index === roundIndex ? true : ended)),
+      version: nextVersion ?? session.version,
+    });
+  }
+
+  if (action === "edit") {
+    if (stage === "league") {
+      return normalizeSession({
+        ...session,
+        endedLeagueRounds: session.endedLeagueRounds.map((ended, index) => (index === roundIndex ? false : ended)),
+        activeLeagueRound: Math.max(session.activeLeagueRound, roundIndex),
+        knockoutScoresByRound: [],
+        activeKnockoutRound: -1,
+        endedKnockoutRounds: [],
+        version: nextVersion ?? session.version,
+      });
+    }
+
+    return normalizeSession({
+      ...session,
+      knockoutScoresByRound: session.knockoutScoresByRound.slice(0, roundIndex + 1),
+      activeKnockoutRound: Math.max(Math.min(session.activeKnockoutRound, roundIndex), roundIndex),
+      endedKnockoutRounds: session.endedKnockoutRounds
+        .slice(0, roundIndex + 1)
+        .map((ended, index) => (index === roundIndex ? false : ended)),
+      version: nextVersion ?? session.version,
+    });
+  }
+
+  return session;
 }
 
 function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, onDelete, onRename }) {
@@ -615,6 +706,10 @@ function waitForNextPaint() {
   });
 }
 
+function getRoundFlushKey(stage, roundIndex) {
+  return `${stage}:${roundIndex}`;
+}
+
 function BrandIcon({ className = "h-10 w-10" }) {
   return (
     <svg viewBox="0 0 48 48" fill="none" aria-hidden="true" className={className}>
@@ -865,10 +960,14 @@ export default function App() {
   const [organizerDialogOpen, setOrganizerDialogOpen] = useState(false);
   const [organizerDialogError, setOrganizerDialogError] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [pendingScoreCount, setPendingScoreCount] = useState(0);
+  const [savingScoreCount, setSavingScoreCount] = useState(0);
+  const [lastScoreSavedAt, setLastScoreSavedAt] = useState(0);
   const timerRef = useRef(null);
   const sessionTimerRef = useRef(null);
   const reviewStepRef = useRef(null);
   const pendingScoreEditsRef = useRef({});
+  const roundFlushTimersRef = useRef({});
   const scoreMutationQueueRef = useRef(Promise.resolve());
   const lastLocalEditAtRef = useRef(0);
   const previousNonScoringViewRef = useRef(initialView === "scoring" ? "sessions" : initialView);
@@ -1095,10 +1194,39 @@ export default function App() {
     loadPlayerStatsDetail(selectedPlayer);
   }, [view, selectedPlayer]);
 
+  useEffect(() => {
+    return () => {
+      Object.values(roundFlushTimersRef.current).forEach((timerId) => window.clearTimeout(timerId));
+      roundFlushTimersRef.current = {};
+    };
+  }, []);
+
   function enqueueScoreMutation(task) {
     const nextOperation = scoreMutationQueueRef.current.then(task, task);
     scoreMutationQueueRef.current = nextOperation.catch(() => {});
     return nextOperation;
+  }
+
+  function syncPendingScoreCount() {
+    setPendingScoreCount(Object.keys(pendingScoreEditsRef.current).length);
+  }
+
+  function clearScheduledRoundFlush(stage, roundIndex) {
+    const flushKey = getRoundFlushKey(stage, roundIndex);
+    const timerId = roundFlushTimersRef.current[flushKey];
+    if (timerId) {
+      window.clearTimeout(timerId);
+      delete roundFlushTimersRef.current[flushKey];
+    }
+  }
+
+  function scheduleRoundScoreFlush(sessionId, stage, roundIndex, editToken, delayMs = SCORE_SAVE_DEBOUNCE_MS) {
+    clearScheduledRoundFlush(stage, roundIndex);
+    const flushKey = getRoundFlushKey(stage, roundIndex);
+    roundFlushTimersRef.current[flushKey] = window.setTimeout(() => {
+      delete roundFlushTimersRef.current[flushKey];
+      void flushRoundScoreEdits(sessionId, stage, roundIndex, editToken);
+    }, delayMs);
   }
 
   async function handleGenerate() {
@@ -1199,6 +1327,35 @@ export default function App() {
       setError((currentError) => currentError || e.message);
     } finally {
       setPlayerStatsDetailLoading(false);
+    }
+  }
+
+  async function refreshCurrentSessionSnapshot(
+    sessionId,
+    editToken,
+    {
+      label = "Refreshing session...",
+      includeHistory = false,
+      includePlayerStats = false,
+    } = {}
+  ) {
+    setSessionLoadingLabel(label);
+    setSessionLoading(true);
+    try {
+      const latest = mergePendingScoreEdits(
+        normalizeSession(await fetchSharedSession(sessionId, editToken)),
+        pendingScoreEditsRef.current
+      );
+      rememberSessionAccess(latest.sessionId, latest.editToken);
+      setCurrentSession((current) => (current?.sessionId === sessionId ? latest : current));
+      refreshSupportingViews({ includeHistory, includePlayerStats });
+      setError(null);
+      return latest;
+    } catch (e) {
+      setError(e.message);
+      return null;
+    } finally {
+      setSessionLoading(false);
     }
   }
 
@@ -1478,76 +1635,80 @@ export default function App() {
     const { sessionId, editToken } = currentSession;
 
     setPendingRoundAction({ stage, roundIndex, action: "start" });
-    setSessionLoadingLabel(`Starting ${stage === "knockout" ? "playoff" : "league"} round...`);
-    setSessionLoading(true);
     try {
-      const updated = await startSharedRound(sessionId, {
+      const result = await startSharedRound(sessionId, {
         stage,
         round_index: roundIndex,
       }, editToken);
-      const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
-      rememberSessionAccess(normalized.sessionId, normalized.editToken);
-      setCurrentSession(normalized);
-      refreshSupportingViews({ includeHistory: true, includePlayerStats: true });
+      setCurrentSession((current) =>
+        applyLocalRoundMutation(current, stage, roundIndex, "start", result.version)
+      );
+      refreshSupportingViews();
       setError(null);
     } catch (e) {
       setError(e.message);
     } finally {
       setPendingRoundAction(null);
-      setSessionLoading(false);
     }
   }
 
   async function handleEndRound(stage, roundIndex) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
     const { sessionId, editToken } = currentSession;
+    const willCompleteSession = isSessionComplete(
+      applyLocalRoundMutation(currentSession, stage, roundIndex, "end", currentSession.version)
+    );
 
     setPendingRoundAction({ stage, roundIndex, action: "end" });
-    setSessionLoadingLabel("Ending round...");
-    setSessionLoading(true);
     try {
       await waitForNextPaint();
       await flushRoundScoreEdits(sessionId, stage, roundIndex, editToken);
-      const updated = await endSharedRound(sessionId, {
+      const result = await endSharedRound(sessionId, {
         stage,
         round_index: roundIndex,
       }, editToken);
-      const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
-      rememberSessionAccess(normalized.sessionId, normalized.editToken);
-      setCurrentSession(normalized);
-      refreshSupportingViews({ includeHistory: true, includePlayerStats: true });
+      setCurrentSession((current) =>
+        applyLocalRoundMutation(current, stage, roundIndex, "end", result.version)
+      );
       setError(null);
+      void refreshCurrentSessionSnapshot(sessionId, editToken, {
+        label: "Refreshing rankings...",
+        includeHistory: willCompleteSession,
+        includePlayerStats: willCompleteSession,
+      });
     } catch (e) {
       setError(e.message);
     } finally {
       setPendingRoundAction(null);
-      setSessionLoading(false);
     }
   }
 
   async function handleEditRound(stage, roundIndex) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
     const { sessionId, editToken } = currentSession;
+    const wasComplete = isSessionComplete(currentSession);
 
     setPendingRoundAction({ stage, roundIndex, action: "edit" });
-    setSessionLoadingLabel("Re-opening round...");
-    setSessionLoading(true);
     try {
       await waitForNextPaint();
       await flushRoundScoreEdits(sessionId, stage, roundIndex, editToken);
-      const updated = await editSharedRound(sessionId, {
+      const result = await editSharedRound(sessionId, {
         stage,
         round_index: roundIndex,
       }, editToken);
-      const normalized = mergePendingScoreEdits(normalizeSession(updated), pendingScoreEditsRef.current);
-      rememberSessionAccess(normalized.sessionId, normalized.editToken);
-      setCurrentSession(normalized);
+      setCurrentSession((current) =>
+        applyLocalRoundMutation(current, stage, roundIndex, "edit", result.version)
+      );
       setError(null);
+      void refreshCurrentSessionSnapshot(sessionId, editToken, {
+        label: "Refreshing session...",
+        includeHistory: wasComplete,
+        includePlayerStats: wasComplete,
+      });
     } catch (e) {
       setError(e.message);
     } finally {
       setPendingRoundAction(null);
-      setSessionLoading(false);
     }
   }
 
@@ -1569,32 +1730,8 @@ export default function App() {
     });
   }
 
-  async function pushScoreUpdate(sessionId, editToken, stage, roundIndex, courtIndex, teamKey, rawValue) {
-    const syncKey = getScoreSyncKey(stage, roundIndex, courtIndex, teamKey);
-
-    return enqueueScoreMutation(async () => {
-      try {
-        const result = await updateSharedScore(sessionId, {
-          stage,
-          round_index: roundIndex,
-          court_index: courtIndex,
-          team_key: teamKey,
-          value: rawValue === "" ? null : Math.max(0, Number.parseInt(rawValue, 10) || 0),
-        }, editToken || sessionAccess[sessionId] || null);
-        if (pendingScoreEditsRef.current[syncKey]?.rawValue === rawValue) {
-          delete pendingScoreEditsRef.current[syncKey];
-        }
-
-        setCurrentSession((current) => (current ? { ...current, version: result.version ?? current.version } : current));
-        setError(null);
-      } catch (e) {
-        setError(e.message);
-        throw e;
-      }
-    });
-  }
-
   async function flushRoundScoreEdits(sessionId, stage, roundIndex, editToken) {
+    clearScheduledRoundFlush(stage, roundIndex);
     const pendingEntries = Object.entries(pendingScoreEditsRef.current).filter(([, edit]) =>
       edit.stage === stage && edit.roundIndex === roundIndex
     );
@@ -1602,28 +1739,38 @@ export default function App() {
     if (pendingEntries.length === 0) return;
 
     await enqueueScoreMutation(async () => {
-      const updates = pendingEntries.map(([, edit]) => ({
-        stage,
-        round_index: roundIndex,
-        court_index: edit.courtIndex,
-        team_key: edit.teamKey,
-        value: edit.rawValue === "" ? null : Math.max(0, Number.parseInt(edit.rawValue, 10) || 0),
-      }));
+      setSavingScoreCount((count) => count + 1);
+      try {
+        const updates = pendingEntries.map(([, edit]) => ({
+          stage,
+          round_index: roundIndex,
+          court_index: edit.courtIndex,
+          team_key: edit.teamKey,
+          value: edit.rawValue === "" ? null : Math.max(0, Number.parseInt(edit.rawValue, 10) || 0),
+        }));
 
-      const result = await batchUpdateSharedScores(sessionId, {
-        stage,
-        round_index: roundIndex,
-        updates,
-      }, editToken || sessionAccess[sessionId] || null);
+        const result = await batchUpdateSharedScores(sessionId, {
+          stage,
+          round_index: roundIndex,
+          updates,
+        }, editToken || sessionAccess[sessionId] || null);
 
-      pendingEntries.forEach(([syncKey, edit]) => {
-        if (pendingScoreEditsRef.current[syncKey]?.rawValue === edit.rawValue) {
-          delete pendingScoreEditsRef.current[syncKey];
-        }
-      });
+        pendingEntries.forEach(([syncKey, edit]) => {
+          if (pendingScoreEditsRef.current[syncKey]?.rawValue === edit.rawValue) {
+            delete pendingScoreEditsRef.current[syncKey];
+          }
+        });
 
-      setCurrentSession((current) => (current ? { ...current, version: result.version ?? current.version } : current));
-      setError(null);
+        syncPendingScoreCount();
+        setCurrentSession((current) => (current ? { ...current, version: result.version ?? current.version } : current));
+        setLastScoreSavedAt(Date.now());
+        setError(null);
+      } catch (e) {
+        setError(e.message);
+        throw e;
+      } finally {
+        setSavingScoreCount((count) => Math.max(0, count - 1));
+      }
     });
   }
 
@@ -1638,14 +1785,25 @@ export default function App() {
       teamKey,
       rawValue,
     };
+    syncPendingScoreCount();
     setCurrentSession((current) =>
       applyLocalScoreChange(current, stage, roundIndex, courtIndex, teamKey, rawValue)
     );
+    scheduleRoundScoreFlush(currentSession.sessionId, stage, roundIndex, currentSession.editToken);
   }
 
   function handleScoreCommit(stage, roundIndex, courtIndex, teamKey, rawValue) {
     if (!currentSession?.sessionId || !currentSession.canEdit) return;
-    pushScoreUpdate(currentSession.sessionId, currentSession.editToken, stage, roundIndex, courtIndex, teamKey, rawValue);
+    pendingScoreEditsRef.current[getScoreSyncKey(stage, roundIndex, courtIndex, teamKey)] = {
+      stage,
+      roundIndex,
+      courtIndex,
+      teamKey,
+      rawValue,
+    };
+    syncPendingScoreCount();
+    clearScheduledRoundFlush(stage, roundIndex);
+    void flushRoundScoreEdits(currentSession.sessionId, stage, roundIndex, currentSession.editToken);
   }
 
   const canContinueFromPlayers = selectedPlayerIds.length >= 4;
@@ -1664,6 +1822,12 @@ export default function App() {
     setView(nextView);
     setMobileNavOpen(false);
   }
+
+  const recentlySavedScores =
+    pendingScoreCount === 0 &&
+    savingScoreCount === 0 &&
+    lastScoreSavedAt > 0 &&
+    Date.now() - lastScoreSavedAt < SCORE_SAVED_FEEDBACK_MS;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1768,6 +1932,36 @@ export default function App() {
                 The backend may be waking up. This can take a little longer on cold start.
               </p>
             ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {view === "scoring" && !sessionLoading && (pendingScoreCount > 0 || savingScoreCount > 0 || recentlySavedScores) ? (
+        <div className="pointer-events-none fixed inset-x-4 bottom-4 z-40 sm:inset-x-auto sm:right-4 sm:bottom-4 sm:w-[320px]">
+          <div
+            className={`rounded-2xl border p-4 shadow-lg ${
+              pendingScoreCount > 0
+                ? "border-amber-200 bg-amber-50"
+                : savingScoreCount > 0
+                  ? "border-blue-200 bg-blue-50"
+                  : "border-emerald-200 bg-emerald-50"
+            }`}
+          >
+            <p
+              className={`text-sm font-medium ${
+                pendingScoreCount > 0
+                  ? "text-amber-800"
+                  : savingScoreCount > 0
+                    ? "text-blue-700"
+                    : "text-emerald-700"
+              }`}
+            >
+              {pendingScoreCount > 0
+                ? `${pendingScoreCount} unsaved score change${pendingScoreCount === 1 ? "" : "s"}`
+                : savingScoreCount > 0
+                  ? "Saving score changes..."
+                  : "Score changes saved"}
+            </p>
           </div>
         </div>
       ) : null}
