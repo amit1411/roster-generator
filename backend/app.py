@@ -147,6 +147,10 @@ class RosterResponse(BaseModel):
     warnings: list[str]
 
 
+class RosterRevalidateRequest(RosterRequest):
+    roster: RosterResponse
+
+
 class DrawConfig(BaseModel):
     draw_type: str = "round_robin"
     league_meetings: int = 1
@@ -165,6 +169,11 @@ class SharedSessionCreateRequest(BaseModel):
     name: str | None = None
     selected_players: list[SessionPlayerReference] = []
     fixed_pair_player_ids: list[list[str]] = []
+    fixed_pairs: list[list[str]] = []
+    limits: dict[str, int] = {}
+    pair_games: int = 3
+    pair_start_round: int = 5
+    max_consecutive_rest: int = 1
     admin_token: str | None = None
 
 
@@ -1647,6 +1656,148 @@ def _restore_undo_snapshot(payload: dict, snapshot: dict):
     payload["undo_stack"] = []
 
 
+def _build_roster_response_from_rounds(
+    rounds: list[dict],
+    players: list[str],
+    court_numbers: list[str],
+    fixed_pairs: list[tuple[str, str]],
+    limits: dict[str, int],
+    pair_games: int,
+    pair_start_round: int,
+    max_consecutive_rest: int,
+    warnings: list[str] | None = None,
+):
+    fixed_pair_counts = {pair: 0 for pair in fixed_pairs}
+    rest_counts: dict[str, int] = {player: 0 for player in players}
+
+    for round_data in rounds:
+        for player in round_data.get("resting", []):
+            rest_counts[player] += 1
+
+        for court in round_data.get("courts", []):
+            for team in (court[0], court[1]):
+                if len(team) != 2:
+                    continue
+                pair_key = tuple(sorted(team))
+                if pair_key in fixed_pair_counts:
+                    fixed_pair_counts[pair_key] += 1
+
+    violations = validate_roster(
+        rounds,
+        limits,
+        max_consecutive_rest,
+        fixed_pairs,
+        fixed_pair_counts,
+        pair_games,
+        pair_start_round,
+    )
+
+    round_results = []
+    for round_data in rounds:
+        round_results.append(
+            RoundResult(
+                round=round_data["round"],
+                courts=[
+                    CourtResult(team_a=list(team_a), team_b=list(team_b))
+                    for team_a, team_b in round_data.get("courts", [])
+                ],
+                resting=list(round_data.get("resting", [])),
+            )
+        )
+
+    return RosterResponse(
+        rounds=round_results,
+        court_numbers=court_numbers,
+        rest_counts=dict(sorted(rest_counts.items())),
+        fixed_pair_counts={f"{a} & {b}": count for (a, b), count in fixed_pair_counts.items()},
+        violations=violations,
+        warnings=warnings or [],
+    )
+
+
+def _normalize_existing_roster(req: RosterRequest, roster: RosterResponse) -> RosterResponse:
+    players = list(req.players)
+    players_set = set(players)
+    fixed_pairs = [tuple(sorted(pair)) for pair in req.fixed_pairs]
+
+    court_numbers = req.court_numbers
+    if not court_numbers or len(court_numbers) != req.num_courts:
+        court_numbers = [str(i + 1) for i in range(req.num_courts)]
+
+    num_playing = req.num_courts * 4
+    num_resting = len(players) - num_playing
+    if num_resting < 0:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Need at least {num_playing} players for {req.num_courts} court(s), but only {len(players)} provided.",
+        )
+
+    expected_rounds = req.rounds
+    if len(roster.rounds) != expected_rounds:
+        raise HTTPException(status_code=422, detail="Edited roster must contain the configured number of rounds")
+
+    warnings: list[str] = []
+    if num_resting == 0 and req.limits:
+        warnings.append(
+            "No rest slots available (players == courts*4). Consecutive game limits cannot be enforced."
+        )
+
+    normalized_rounds: list[dict] = []
+    for expected_round_number, round_result in enumerate(roster.rounds, start=1):
+        if round_result.round != expected_round_number:
+            raise HTTPException(status_code=422, detail="Edited roster contains invalid round numbering")
+        if len(round_result.courts) != req.num_courts:
+            raise HTTPException(status_code=422, detail=f"Round {round_result.round} must contain exactly {req.num_courts} courts")
+        if len(round_result.resting) != num_resting:
+            raise HTTPException(status_code=422, detail=f"Round {round_result.round} must contain exactly {num_resting} resting players")
+
+        seen_players: list[str] = []
+        normalized_courts: list[tuple[tuple[str, str], tuple[str, str]]] = []
+        for court_result in round_result.courts:
+            if len(court_result.team_a) != 2 or len(court_result.team_b) != 2:
+                raise HTTPException(status_code=422, detail=f"Round {round_result.round} courts must contain exactly 2 players per team")
+            for player in court_result.team_a + court_result.team_b:
+                if player not in players_set:
+                    raise HTTPException(status_code=422, detail=f"Round {round_result.round} contains unknown player '{player}'")
+                seen_players.append(player)
+            normalized_courts.append(
+                (
+                    tuple(sorted(court_result.team_a)),
+                    tuple(sorted(court_result.team_b)),
+                )
+            )
+
+        for player in round_result.resting:
+            if player not in players_set:
+                raise HTTPException(status_code=422, detail=f"Round {round_result.round} contains unknown player '{player}'")
+            seen_players.append(player)
+
+        if len(seen_players) != len(players) or set(seen_players) != players_set:
+            raise HTTPException(status_code=422, detail=f"Round {round_result.round} must include every selected player exactly once")
+        if len(seen_players) != len(set(seen_players)):
+            raise HTTPException(status_code=422, detail=f"Round {round_result.round} contains duplicate players")
+
+        normalized_rounds.append(
+            {
+                "round": round_result.round,
+                "courts": normalized_courts,
+                "resting": sorted(round_result.resting),
+            }
+        )
+
+    return _build_roster_response_from_rounds(
+        normalized_rounds,
+        players,
+        court_numbers,
+        fixed_pairs,
+        req.limits,
+        req.pair_games,
+        req.pair_start_round,
+        req.max_consecutive_rest,
+        warnings=warnings,
+    )
+
+
 @app.post("/api/generate", response_model=RosterResponse)
 def api_generate(req: RosterRequest):
     request_fingerprint = hashlib.sha256(
@@ -1709,15 +1860,45 @@ def api_generate(req: RosterRequest):
     )
 
 
+@app.post("/api/rosters/revalidate", response_model=RosterResponse)
+def api_revalidate_roster(req: RosterRevalidateRequest):
+    return _normalize_existing_roster(req, req.roster)
+
+
 @app.post("/api/sessions", response_model=SharedSessionResponse)
 def create_shared_session(req: SharedSessionCreateRequest):
     if req.admin_token != ADMIN_RECOVERY_TOKEN:
         raise HTTPException(status_code=403, detail="Organizer token required to start a session")
 
+    inferred_players = [player.short_name for player in req.selected_players]
+    if not inferred_players:
+        seen_players = set()
+        for round_data in req.roster.rounds:
+            for court in round_data.courts:
+                seen_players.update(court.team_a)
+                seen_players.update(court.team_b)
+            seen_players.update(round_data.resting)
+        inferred_players = sorted(seen_players)
+
+    normalized_roster = _normalize_existing_roster(
+        RosterRequest(
+            players=inferred_players,
+            fixed_pairs=req.fixed_pairs,
+            num_courts=len(req.roster.court_numbers),
+            court_numbers=req.roster.court_numbers,
+            rounds=len(req.roster.rounds),
+            limits=req.limits,
+            pair_games=req.pair_games,
+            pair_start_round=req.pair_start_round,
+            max_consecutive_rest=req.max_consecutive_rest,
+        ),
+        req.roster,
+    )
+
     payload = {
         "name": req.name or f"session-{secrets.token_hex(2)}",
         "edit_token": secrets.token_urlsafe(12),
-        "roster": req.roster.model_dump(),
+        "roster": normalized_roster.model_dump(),
         "draw_config": req.draw_config.model_dump(),
         "player_directory": [player.model_dump() for player in req.selected_players],
         "fixed_pair_player_ids": req.fixed_pair_player_ids,

@@ -24,6 +24,7 @@ import {
   listPlayers,
   listPlayerStats,
   renameSharedSession,
+  revalidateRoster,
   listSharedSessions,
   startSharedRound,
   updatePlayer,
@@ -144,6 +145,101 @@ function getLeagueRequestPayload(players, fixedPairs, config) {
     pair_start_round: config.pair_start_round,
     max_consecutive_rest: config.max_consecutive_rest,
     seed: config.seed,
+  };
+}
+
+function getRosterRevalidatePayload(roster, players, fixedPairs, config) {
+  return {
+    roster,
+    ...getLeagueRequestPayload(players, fixedPairs, config),
+  };
+}
+
+function swapRosterSlots(roster, firstSlot, secondSlot) {
+  if (!roster) return roster;
+  if (!firstSlot || !secondSlot) return roster;
+  if (firstSlot.roundIndex !== secondSlot.roundIndex) return roster;
+
+  const nextRoster = {
+    ...roster,
+    rounds: roster.rounds.map((round, roundIndex) => {
+      if (roundIndex !== firstSlot.roundIndex) return round;
+      return {
+        ...round,
+        courts: round.courts.map((court) => ({
+          ...court,
+          team_a: [...court.team_a],
+          team_b: [...court.team_b],
+        })),
+        resting: [...round.resting],
+      };
+    }),
+  };
+
+  const round = nextRoster.rounds[firstSlot.roundIndex];
+  const firstValue = round.courts[firstSlot.courtIndex]?.[firstSlot.teamKey]?.[firstSlot.playerIndex];
+  const secondValue = round.courts[secondSlot.courtIndex]?.[secondSlot.teamKey]?.[secondSlot.playerIndex];
+  if (!firstValue || !secondValue) return roster;
+
+  round.courts[firstSlot.courtIndex][firstSlot.teamKey][firstSlot.playerIndex] = secondValue;
+  round.courts[secondSlot.courtIndex][secondSlot.teamKey][secondSlot.playerIndex] = firstValue;
+  return nextRoster;
+}
+
+function swapRosterTeams(roster, firstTeam, secondTeam) {
+  if (!roster || !firstTeam || !secondTeam) return roster;
+  if (firstTeam.roundIndex !== secondTeam.roundIndex) return roster;
+
+  const nextRoster = {
+    ...roster,
+    rounds: roster.rounds.map((round, roundIndex) => {
+      if (roundIndex !== firstTeam.roundIndex) return round;
+      return {
+        ...round,
+        courts: round.courts.map((court) => ({
+          ...court,
+          team_a: [...court.team_a],
+          team_b: [...court.team_b],
+        })),
+        resting: [...round.resting],
+      };
+    }),
+  };
+
+  const round = nextRoster.rounds[firstTeam.roundIndex];
+  const firstValue = round.courts[firstTeam.courtIndex]?.[firstTeam.teamKey];
+  const secondValue = round.courts[secondTeam.courtIndex]?.[secondTeam.teamKey];
+  if (!firstValue || !secondValue) return roster;
+
+  round.courts[firstTeam.courtIndex][firstTeam.teamKey] = [...secondValue];
+  round.courts[secondTeam.courtIndex][secondTeam.teamKey] = [...firstValue];
+  return nextRoster;
+}
+
+function swapRosterRounds(roster, firstRoundIndex, secondRoundIndex) {
+  if (!roster) return roster;
+  if (firstRoundIndex === secondRoundIndex) return roster;
+  if (firstRoundIndex < 0 || secondRoundIndex < 0) return roster;
+  if (firstRoundIndex >= roster.rounds.length || secondRoundIndex >= roster.rounds.length) return roster;
+
+  const nextRounds = roster.rounds.map((round) => ({
+    ...round,
+    courts: round.courts.map((court) => ({
+      ...court,
+      team_a: [...court.team_a],
+      team_b: [...court.team_b],
+    })),
+    resting: [...round.resting],
+  }));
+
+  [nextRounds[firstRoundIndex], nextRounds[secondRoundIndex]] = [nextRounds[secondRoundIndex], nextRounds[firstRoundIndex]];
+
+  return {
+    ...roster,
+    rounds: nextRounds.map((round, index) => ({
+      ...round,
+      round: index + 1,
+    })),
   };
 }
 
@@ -826,7 +922,10 @@ export default function App() {
   const [fixedPairIds, setFixedPairIds] = useState(plannerState?.fixedPairIds || []);
   const [config, setConfig] = useState(normalizeConfig(plannerState?.config));
   const [roster, setRoster] = useState(plannerState?.roster || null);
+  const [generatedRosterBaseline, setGeneratedRosterBaseline] = useState(plannerState?.generatedRosterBaseline || null);
   const [rosterSignature, setRosterSignature] = useState(plannerState?.rosterSignature || null);
+  const [hasManualRosterEdits, setHasManualRosterEdits] = useState(Boolean(plannerState?.hasManualRosterEdits));
+  const [selectedRosterTarget, setSelectedRosterTarget] = useState(null);
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [sessionElapsed, setSessionElapsed] = useState(0);
@@ -865,6 +964,7 @@ export default function App() {
   const [organizerDialogOpen, setOrganizerDialogOpen] = useState(false);
   const [organizerDialogError, setOrganizerDialogError] = useState(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [rosterEditLoading, setRosterEditLoading] = useState(false);
   const timerRef = useRef(null);
   const sessionTimerRef = useRef(null);
   const reviewStepRef = useRef(null);
@@ -888,6 +988,20 @@ export default function App() {
     .filter(Boolean);
   const plannerRosterSignature = getPlannerRosterSignature(selectedPlayerIds, fixedPairIds, config, directoryPlayers);
   const isRosterStale = Boolean(roster && rosterSignature && rosterSignature !== plannerRosterSignature);
+  const selectedEditSummary = (() => {
+    if (!roster || !selectedRosterTarget) return "";
+    if (selectedRosterTarget.mode === "player") {
+      const player = roster.rounds[selectedRosterTarget.roundIndex]
+        ?.courts[selectedRosterTarget.courtIndex]?.[selectedRosterTarget.teamKey]?.[selectedRosterTarget.playerIndex];
+      return player ? `${player} in Round ${selectedRosterTarget.roundIndex + 1}` : "";
+    }
+    if (selectedRosterTarget.mode === "team") {
+      const team = roster.rounds[selectedRosterTarget.roundIndex]
+        ?.courts[selectedRosterTarget.courtIndex]?.[selectedRosterTarget.teamKey];
+      return team ? `${team.join(" & ")} in Round ${selectedRosterTarget.roundIndex + 1}` : "";
+    }
+    return `Round ${selectedRosterTarget.roundIndex + 1}`;
+  })();
 
   useEffect(() => {
     if (loading) {
@@ -910,8 +1024,28 @@ export default function App() {
   }, [sessionLoading, sessionsLoading]);
 
   useEffect(() => {
-    writeStorage(PLANNER_STORAGE_KEY, { selectedPlayerIds, fixedPairIds, config, roster, rosterSignature });
-  }, [selectedPlayerIds, fixedPairIds, config, roster, rosterSignature]);
+    writeStorage(PLANNER_STORAGE_KEY, {
+      selectedPlayerIds,
+      fixedPairIds,
+      config,
+      roster,
+      generatedRosterBaseline,
+      rosterSignature,
+      hasManualRosterEdits,
+    });
+  }, [selectedPlayerIds, fixedPairIds, config, roster, generatedRosterBaseline, rosterSignature, hasManualRosterEdits]);
+
+  useEffect(() => {
+    if (!roster) {
+      setSelectedRosterTarget(null);
+    }
+  }, [roster]);
+
+  useEffect(() => {
+    if (isRosterStale) {
+      setSelectedRosterTarget(null);
+    }
+  }, [isRosterStale]);
 
   useEffect(() => {
     if (currentSession) {
@@ -1102,19 +1236,30 @@ export default function App() {
   }
 
   async function handleGenerate() {
+    if (hasManualRosterEdits && typeof window !== "undefined") {
+      const shouldContinue = window.confirm(appCopy.planner.regenerateConfirm);
+      if (!shouldContinue) return;
+    }
+
     setLoading(true);
     setError(null);
     setGenerateError(null);
     try {
       const result = await generateRoster(getLeagueRequestPayload(selectedPlayerShortNames, fixedPairs, config));
       setRoster(result);
+      setGeneratedRosterBaseline(result);
       setRosterSignature(plannerRosterSignature);
+      setHasManualRosterEdits(false);
+      setSelectedRosterTarget(null);
       setPlannerStep(3);
       setView("planner");
     } catch (e) {
       setGenerateError(e.message);
       setRoster(null);
+      setGeneratedRosterBaseline(null);
       setRosterSignature(null);
+      setHasManualRosterEdits(false);
+      setSelectedRosterTarget(null);
       window.setTimeout(() => {
         reviewStepRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
       }, 0);
@@ -1299,6 +1444,11 @@ export default function App() {
           short_name: player.shortName,
         })),
         fixed_pair_player_ids: fixedPairIds,
+        fixed_pairs: fixedPairs,
+        limits: config.limits,
+        pair_games: config.pair_games,
+        pair_start_round: config.pair_start_round,
+        max_consecutive_rest: config.max_consecutive_rest,
         admin_token: adminToken,
       });
       const normalized = mergePendingScoreEdits(normalizeSession(session), pendingScoreEditsRef.current);
@@ -1308,7 +1458,10 @@ export default function App() {
       setOrganizerDialogOpen(false);
       setCurrentSession(normalized);
       setRoster(null);
+      setGeneratedRosterBaseline(null);
       setRosterSignature(null);
+      setHasManualRosterEdits(false);
+      setSelectedRosterTarget(null);
       setPlannerMode("generate");
       setPlannerStep(1);
       setSessionDraftName(createSessionName());
@@ -1328,6 +1481,113 @@ export default function App() {
     } finally {
       setSessionLoading(false);
     }
+  }
+
+  async function applyRosterEdit(nextRoster) {
+    setRosterEditLoading(true);
+    setError(null);
+    try {
+      const normalized = await revalidateRoster(
+        getRosterRevalidatePayload(nextRoster, selectedPlayerShortNames, fixedPairs, config)
+      );
+      setRoster(normalized);
+      setHasManualRosterEdits(true);
+      setSelectedRosterTarget(null);
+    } catch (e) {
+      setError(e.message);
+      setSelectedRosterTarget(null);
+    } finally {
+      setRosterEditLoading(false);
+    }
+  }
+
+  function clearRosterSelection() {
+    setSelectedRosterTarget(null);
+    setError(null);
+  }
+
+  async function handleRosterPlayerTap(slot) {
+    if (!roster || rosterEditLoading || isRosterStale) return;
+
+    if (!selectedRosterTarget) {
+      setSelectedRosterTarget({ mode: "player", ...slot });
+      setError(null);
+      return;
+    }
+    if (selectedRosterTarget.mode !== "player") {
+      setError(appCopy.planner.playerSwapInvalid);
+      return;
+    }
+
+    const sameSlot =
+      selectedRosterTarget.roundIndex === slot.roundIndex &&
+      selectedRosterTarget.courtIndex === slot.courtIndex &&
+      selectedRosterTarget.teamKey === slot.teamKey &&
+      selectedRosterTarget.playerIndex === slot.playerIndex;
+
+    if (sameSlot) {
+      setSelectedRosterTarget(null);
+      return;
+    }
+
+    if (selectedRosterTarget.roundIndex !== slot.roundIndex) {
+      setError(appCopy.planner.playerSwapInvalid);
+      return;
+    }
+
+    await applyRosterEdit(swapRosterSlots(roster, selectedRosterTarget, slot));
+  }
+
+  async function handleRosterTeamTap(team) {
+    if (!roster || rosterEditLoading || isRosterStale) return;
+
+    if (!selectedRosterTarget) {
+      setSelectedRosterTarget({ mode: "team", ...team });
+      setError(null);
+      return;
+    }
+    if (selectedRosterTarget.mode !== "team") {
+      setError(appCopy.planner.teamSwapInvalid);
+      return;
+    }
+
+    const sameTeam =
+      selectedRosterTarget.roundIndex === team.roundIndex &&
+      selectedRosterTarget.courtIndex === team.courtIndex &&
+      selectedRosterTarget.teamKey === team.teamKey;
+
+    if (sameTeam) {
+      setSelectedRosterTarget(null);
+      return;
+    }
+
+    if (selectedRosterTarget.roundIndex !== team.roundIndex) {
+      setError(appCopy.planner.teamSwapInvalid);
+      return;
+    }
+
+    await applyRosterEdit(swapRosterTeams(roster, selectedRosterTarget, team));
+  }
+
+  async function handleRosterRoundTap(roundIndex) {
+    if (!roster || rosterEditLoading || isRosterStale) return;
+
+    if (!selectedRosterTarget) {
+      setSelectedRosterTarget({ mode: "round", roundIndex });
+      setError(null);
+      return;
+    }
+    if (selectedRosterTarget.mode !== "round") {
+      setError(appCopy.planner.roundSwapInvalid);
+      return;
+    }
+
+    if (selectedRosterTarget.roundIndex === roundIndex) {
+      setSelectedRosterTarget(null);
+      return;
+    }
+
+    await applyRosterEdit(swapRosterRounds(roster, selectedRosterTarget.roundIndex, roundIndex));
   }
 
   async function handleLockRoster() {
@@ -1952,6 +2212,12 @@ export default function App() {
                             </p>
                           </div>
                         ) : null}
+                        {roster && hasManualRosterEdits && !isRosterStale ? (
+                          <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800">
+                            <p className="font-semibold">{appCopy.planner.editedBadge}</p>
+                            <p className="mt-1">{appCopy.planner.editedHint}</p>
+                          </div>
+                        ) : null}
                         <p className={`text-sm ${roster ? "text-slate-300" : "text-gray-600"}`}>
                           {roster
                             ? isRosterStale
@@ -2012,7 +2278,28 @@ export default function App() {
                     )}
                   </PlannerStepCard>
 
-                  {roster ? <RosterTable data={roster} fixedPairs={fixedPairs} /> : null}
+                  {roster ? (
+                    <RosterTable
+                      data={roster}
+                      fixedPairs={fixedPairs}
+                      editable={!isRosterStale}
+                      editMode={selectedRosterTarget?.mode || null}
+                      selectedTarget={selectedRosterTarget}
+                      editTitle={appCopy.planner.editBannerTitle}
+                      editSummary={
+                        selectedRosterTarget
+                          ? appCopy.planner.selectionPrefix.replace("{item}", selectedEditSummary)
+                          : appCopy.planner.selectionIdle
+                      }
+                      editHint={selectedRosterTarget ? appCopy.planner.selectionHints[selectedRosterTarget.mode] : null}
+                      cancelSelectionLabel={appCopy.planner.cancelSelection}
+                      onCancelSelection={clearRosterSelection}
+                      editLoading={rosterEditLoading}
+                      onTapPlayer={handleRosterPlayerTap}
+                      onTapTeam={handleRosterTeamTap}
+                      onTapRound={handleRosterRoundTap}
+                    />
+                  ) : null}
                 </div>
               ) : null}
             </div>
