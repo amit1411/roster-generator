@@ -23,12 +23,18 @@ export async function generateRoster(request, overrides = {}) {
   return response.json();
 }
 
-export async function createSharedSession(request, { name, roster, drawConfig }) {
+export async function createSharedSession(request, { name, roster, drawConfig, players = [], fixedPairs = [], limits = {}, pairGames = 1, pairStartRound = 1, maxConsecutiveRest = 1 }) {
   const response = await request.post(`${API_BASE}/api/sessions`, {
     data: {
       name,
       roster,
       draw_config: drawConfig,
+      selected_players: players,
+      fixed_pairs: fixedPairs,
+      limits,
+      pair_games: pairGames,
+      pair_start_round: pairStartRound,
+      max_consecutive_rest: maxConsecutiveRest,
       admin_token: ADMIN_TOKEN,
     },
   });

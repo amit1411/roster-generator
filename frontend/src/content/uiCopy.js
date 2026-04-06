@@ -16,6 +16,22 @@ export const appCopy = {
     title: "Build the next session from scratch",
     description:
       "Add players, configure the format, generate the roster, and start a new session.",
+    editBannerTitle: "Roster edits",
+    editedBadge: "Edited roster",
+    editedHint: "Manual swaps are active in this preview. Regenerating will discard them and start fresh.",
+    selectionIdle: "Tap a player, team, or round to edit.",
+    swapLoading: "Applying swap...",
+    cancelSelection: "Cancel selection",
+    selectionPrefix: "Selected {item}.",
+    playerSwapInvalid: "Pick another player in the same round to swap.",
+    teamSwapInvalid: "Pick another team in the same round to swap.",
+    roundSwapInvalid: "Pick another round to swap.",
+    selectionHints: {
+      player: "Select another player in the same round or tap the same player again to cancel.",
+      team: "Select another team in the same round or tap the same team again to cancel.",
+      round: "Select another round or tap the same round again to cancel.",
+    },
+    regenerateConfirm: "Regenerating will discard all manual roster swaps and rebuild from the current planner inputs. Continue?",
     badges: [
       "Player-first setup",
       "Fast roster generation",
