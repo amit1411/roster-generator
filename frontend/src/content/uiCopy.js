@@ -28,7 +28,7 @@ export const appCopy = {
     description:
       "This is a temporary safeguard until login exists. The token is remembered on this device so organizers do not need to re-enter it every time.",
     fieldLabel: "Organizer token",
-    fieldPlaceholder: "Enter ADMIN_RECOVERY_TOKEN",
+    fieldPlaceholder: "Enter Password",
     cancel: "Cancel",
     submit: "Start Session",
     submitLoading: "Checking...",
@@ -143,7 +143,7 @@ export const playersPageCopy = {
     descriptionTwo:
       "If you also tick the historical option below, player analytics records will be deleted as well. Use that only if you truly want to remove the player from historical stats.",
     tokenLabel: "Admin token",
-    tokenPlaceholder: "Enter DELETE token to confirm",
+    tokenPlaceholder: "Enter Password to confirm",
     deleteHistory: "Also delete historical player records",
     cancel: "Cancel",
     submit: "Delete Player",
