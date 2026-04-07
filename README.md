@@ -8,6 +8,31 @@ A web app for planning badminton doubles sessions, running live scoring, and rev
 - `DATABASE_MODEL.md` for current persistence design
 - `TESTING.md` for build and Playwright notes
 - `NEW-FEATURES.md` for backlog and feature status
+- `frontend/README.md` for the current frontend architecture
+
+## Current Stack
+
+- Backend: FastAPI + SQLAlchemy
+- Frontend: React + Vite + `react-router-dom`
+- Storage: Postgres for app data, SQLite only for isolated local Playwright runs
+- Tests: Playwright desktop + mobile suites
+
+## Current Product Areas
+
+- Planner with directory-driven player selection, fixed pairs, generation, and manual swap-only roster editing
+- Active Sessions for reopen/share/rename/delete
+- History for completed sessions
+- Player Stats for completed-session analytics
+- Players for canonical player management
+
+## Repo-Local AI Skills
+
+This repo now includes local AI guidance under [.agents](/Users/amit.agarwal/Documents/WBD_Repos/badminton-roster/.agents):
+
+- `.agents/skills/frontend-design`
+- `.agents/skills/vercel-react-best-practices`
+
+If you are using an AI coding agent that supports repo-local skills, point it at those files for UI work and React refactors.
 
 ## Quick Start
 
@@ -63,12 +88,17 @@ docker compose down -v
 
 - Player directory with stable IDs, editable names, and soft-delete/restore behavior
 - Planner wizard with player selection from the directory and tap-to-pair UX
+- Manual roster editing before session start
+  - player swap
+  - team swap
+  - round swap
+  - server-side revalidation before start
 - Organizer-token-gated session creation
 - Active Sessions page for ongoing sessions
 - History page for completed sessions only
 - Player Stats page with completed-session analytics
 - Round-robin and league+knockout session formats
 - Live scoring, standings, bracket, and final results
-- Session rename, share links, and view-only/scorer access separation
+- Session rename, route-based share links, and view-only/scorer access separation
 - Optional backend caching with memory or Redis
 - Playwright E2E coverage for desktop, mobile, and opt-in staging runs
