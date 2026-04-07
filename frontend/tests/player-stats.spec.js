@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { loginAsOrganizer } from "./helpers/auth";
 import { navigateToSection } from "./helpers/navigation";
 import { completeRoundRobinSession } from "./helpers/session";
 
@@ -6,9 +7,12 @@ test("player stats page shows completed-session analytics", async ({ page, reque
   await completeRoundRobinSession(request, "Player Stats Complete");
 
   await page.goto("/");
+  await loginAsOrganizer(page);
   await navigateToSection(page, "Player Stats");
 
   await expect(page.getByRole("heading", { name: "Leaderboard" })).toBeVisible();
+  await page.getByRole("button", { name: "Refresh" }).click();
+  await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible();
   const leaderboard = page.locator("section").filter({ has: page.getByRole("heading", { name: "Leaderboard" }) });
   await leaderboard.getByRole("button", { name: /^A\b/ }).click();
   const profileSection = page.locator("section").filter({ has: page.getByRole("heading", { name: "A", exact: true }) });
@@ -28,6 +32,7 @@ test("mobile player stats keeps leaderboard visible until a player is selected",
   await completeRoundRobinSession(request, "Mobile Player Stats");
 
   await page.goto("/");
+  await loginAsOrganizer(page);
   await navigateToSection(page, "Player Stats");
 
   const leaderboardHeading = page.getByRole("heading", { name: "Leaderboard" });

@@ -265,3 +265,34 @@ export const playerStatsPageCopy = {
       "Once enough completed matches are available, the strongest partnerships will show up here.",
   },
 };
+
+export const profilePageCopy = {
+  hero: {
+    eyebrow: "Profile",
+    title: "Workspace home",
+    description: "A private organizer space for your account and current workspace.",
+    role: "Organizer access",
+    personalType: "Personal workspace",
+    clubType: "Club workspace",
+    noWorkspace: "Workspace pending",
+  },
+  account: {
+    eyebrow: "Account",
+    title: "Organizer account",
+    accessLabel: "Access",
+    accessValue: "Secure organizer sign-in",
+    emailLabel: "Email",
+    workspaceLabel: "Active workspace",
+    logout: "Logout",
+  },
+  workspaces: {
+    eyebrow: "Workspaces",
+    title: "Available spaces",
+    description: "Switch between your organizer spaces when more than one is available.",
+    current: "Current",
+    switch: "Switch",
+    switchLoading: "Switching...",
+    emptyTitle: "No workspace available yet",
+    emptyDescription: "A personal workspace appears automatically for each organizer account.",
+  },
+};

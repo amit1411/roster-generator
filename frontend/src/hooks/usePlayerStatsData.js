@@ -1,20 +1,33 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { fetchPlayerStats, listPlayerStats } from "../api";
 import { normalizePlayerDetail, normalizePlayerSummary } from "./appStateUtils";
 
-export default function usePlayerStatsData({ view }) {
+export default function usePlayerStatsData({ enabled = false, view }) {
   const [playerStats, setPlayerStats] = useState([]);
   const [playerStatsLoading, setPlayerStatsLoading] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState(null);
   const [playerStatsDetail, setPlayerStatsDetail] = useState(null);
   const [playerStatsDetailLoading, setPlayerStatsDetailLoading] = useState(false);
   const [pageError, setPageError] = useState(null);
+  const playerStatsRequestId = useRef(0);
+  const playerStatsDetailRequestId = useRef(0);
 
   useEffect(() => {
+    if (!enabled) {
+      playerStatsRequestId.current += 1;
+      playerStatsDetailRequestId.current += 1;
+      setPlayerStats([]);
+      setPlayerStatsLoading(false);
+      setSelectedPlayer(null);
+      setPlayerStatsDetail(null);
+      setPlayerStatsDetailLoading(false);
+      setPageError(null);
+      return;
+    }
     if (view === "player-stats") {
       void loadPlayerStats();
     }
-  }, [view]);
+  }, [enabled, view]);
 
   useEffect(() => {
     if (playerStats.length === 0) {
@@ -33,33 +46,66 @@ export default function usePlayerStatsData({ view }) {
   }, [playerStats, playerStatsDetail, selectedPlayer]);
 
   useEffect(() => {
-    if (view !== "player-stats" || !selectedPlayer) return;
+    if (!enabled || view !== "player-stats" || !selectedPlayer) return;
     void loadPlayerStatsDetail(selectedPlayer);
-  }, [selectedPlayer, view]);
+  }, [enabled, selectedPlayer, view]);
 
   async function loadPlayerStats() {
+    if (!enabled) {
+      setPlayerStats([]);
+      setPageError(null);
+      return [];
+    }
+    const requestId = playerStatsRequestId.current + 1;
+    playerStatsRequestId.current = requestId;
     setPlayerStatsLoading(true);
     setPageError(null);
     try {
       const list = await listPlayerStats();
-      setPlayerStats(list.map(normalizePlayerSummary).filter(Boolean));
+      if (playerStatsRequestId.current !== requestId) {
+        return [];
+      }
+      const normalized = list.map(normalizePlayerSummary).filter(Boolean);
+      setPlayerStats(normalized);
+      return normalized;
     } catch (error) {
-      setPageError(error.message);
+      if (playerStatsRequestId.current === requestId) {
+        setPageError(error.message);
+      }
+      return [];
     } finally {
-      setPlayerStatsLoading(false);
+      if (playerStatsRequestId.current === requestId) {
+        setPlayerStatsLoading(false);
+      }
     }
   }
 
   async function loadPlayerStatsDetail(playerName) {
+    if (!enabled || !playerName) {
+      setPlayerStatsDetail(null);
+      return null;
+    }
+    const requestId = playerStatsDetailRequestId.current + 1;
+    playerStatsDetailRequestId.current = requestId;
     setPlayerStatsDetailLoading(true);
     setPageError(null);
     try {
       const detail = await fetchPlayerStats(playerName);
-      setPlayerStatsDetail(normalizePlayerDetail(detail));
+      if (playerStatsDetailRequestId.current !== requestId) {
+        return null;
+      }
+      const normalized = normalizePlayerDetail(detail);
+      setPlayerStatsDetail(normalized);
+      return normalized;
     } catch (error) {
-      setPageError(error.message);
+      if (playerStatsDetailRequestId.current === requestId) {
+        setPageError(error.message);
+      }
+      return null;
     } finally {
-      setPlayerStatsDetailLoading(false);
+      if (playerStatsDetailRequestId.current === requestId) {
+        setPlayerStatsDetailLoading(false);
+      }
     }
   }
 

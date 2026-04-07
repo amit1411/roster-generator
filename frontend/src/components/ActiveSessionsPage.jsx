@@ -110,6 +110,7 @@ function SessionCard({ session, isCurrent, feedback, canScore, onOpen, onCopy, o
 
 export default function ActiveSessionsPage({
   sessions,
+  canManageSessions,
   currentSessionId,
   sessionAccess,
   shareFeedback,
@@ -117,6 +118,7 @@ export default function ActiveSessionsPage({
   sessionsLoadingLabel,
   sessionWaitText,
   onRefresh,
+  onRequireOrganizerLogin,
   onOpen,
   onCopy,
   onDelete,
@@ -141,15 +143,21 @@ export default function ActiveSessionsPage({
           </div>
           <button
             type="button"
-            onClick={onRefresh}
-            disabled={sessionsLoading}
+            onClick={canManageSessions ? onRefresh : onRequireOrganizerLogin}
+            disabled={canManageSessions ? sessionsLoading : false}
             className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
           >
-            {sessionsLoading ? sessionWaitText(sessionsLoadingLabel) : activeSessionsPageCopy.section.refresh}
+            {canManageSessions
+              ? (sessionsLoading ? sessionWaitText(sessionsLoadingLabel) : activeSessionsPageCopy.section.refresh)
+              : "Organizer Login Required"}
           </button>
         </div>
         <div className="mt-4 space-y-3 border-t border-gray-100 pt-4">
-          {sessions.length > 0 ? (
+          {!canManageSessions ? (
+            <div className="rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-5 text-sm text-gray-500">
+              Sign in as an organizer to view the active sessions in your workspace.
+            </div>
+          ) : sessions.length > 0 ? (
             sessions.map((session) => (
               <SessionCard
                 key={session.sessionId}

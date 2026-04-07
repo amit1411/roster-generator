@@ -8,7 +8,6 @@ import {
 } from "../api";
 import { appCopy } from "../content/uiCopy";
 import {
-  ORGANIZER_TOKEN_STORAGE_KEY,
   ROUTE_PATHS,
   SESSION_ACCESS_STORAGE_KEY,
   buildShareUrl,
@@ -21,12 +20,12 @@ import {
 } from "./appStateUtils";
 
 export default function useSessionsData({
+  enabled = false,
   navigate,
   refreshPlayerStats,
   view,
 }) {
   const savedSessionAccess = useRef(readStorage(SESSION_ACCESS_STORAGE_KEY, {})).current;
-  const savedOrganizerToken = useRef(readStorage(ORGANIZER_TOKEN_STORAGE_KEY, "")).current;
 
   const [sessionAccess, setSessionAccess] = useState(savedSessionAccess);
   const [sessions, setSessions] = useState([]);
@@ -40,10 +39,6 @@ export default function useSessionsData({
   const [renameLoading, setRenameLoading] = useState(false);
   const [renameError, setRenameError] = useState(null);
   const [shareFeedback, setShareFeedback] = useState({ sessionId: null, text: "" });
-  const [organizerToken, setOrganizerToken] = useState(savedOrganizerToken || "");
-  const [organizerTokenDraft, setOrganizerTokenDraft] = useState(savedOrganizerToken || "");
-  const [organizerDialogOpen, setOrganizerDialogOpen] = useState(false);
-  const [organizerDialogError, setOrganizerDialogError] = useState(null);
   const [sessionMutationLoading, setSessionMutationLoading] = useState(false);
   const [sessionMutationLabel, setSessionMutationLabel] = useState("Syncing shared session...");
 
@@ -52,24 +47,26 @@ export default function useSessionsData({
   }, [sessionAccess]);
 
   useEffect(() => {
-    writeStorage(ORGANIZER_TOKEN_STORAGE_KEY, organizerToken || "");
-  }, [organizerToken]);
-
-  useEffect(() => {
+    if (!enabled) {
+      setSessions([]);
+      setSessionsLoading(false);
+      setPageError(null);
+      return;
+    }
     void loadSessions();
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
-    if (view === "sessions") {
+    if (enabled && view === "sessions") {
       void loadSessions();
     }
-  }, [view]);
+  }, [enabled, view]);
 
   useEffect(() => {
-    if (view === "history") {
+    if (enabled && view === "history") {
       void loadHistorySessions();
     }
-  }, [view]);
+  }, [enabled, view]);
 
   function clearPageError() {
     setPageError(null);
@@ -81,6 +78,11 @@ export default function useSessionsData({
   }, []);
 
   const loadSessions = useCallback(async () => {
+    if (!enabled) {
+      setSessions([]);
+      setPageError(null);
+      return [];
+    }
     setSessionsLoadingLabel("Refreshing session...");
     setSessionsLoading(true);
     setPageError(null);
@@ -92,9 +94,14 @@ export default function useSessionsData({
     } finally {
       setSessionsLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   const loadHistorySessions = useCallback(async () => {
+    if (!enabled) {
+      setHistorySessions([]);
+      setPageError(null);
+      return [];
+    }
     setHistoryLoading(true);
     setPageError(null);
     try {
@@ -105,17 +112,17 @@ export default function useSessionsData({
     } finally {
       setHistoryLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   const refreshSupportingViews = useCallback(({ includeHistory = false, includePlayerStats = false } = {}) => {
     void loadSessions();
-    if (includeHistory) {
+    if (enabled && includeHistory) {
       void loadHistorySessions();
     }
-    if (includePlayerStats) {
+    if (enabled && includePlayerStats) {
       void refreshPlayerStats();
     }
-  }, [loadHistorySessions, loadSessions, refreshPlayerStats]);
+  }, [enabled, loadHistorySessions, loadSessions, refreshPlayerStats]);
 
   function openRenameDialog(sessionId, currentName) {
     setRenameDialog({ open: true, sessionId });
@@ -214,7 +221,7 @@ export default function useSessionsData({
     }
   }
 
-  async function createPlannerSession(planner, adminToken) {
+  async function createPlannerSession(planner) {
     if (!planner.roster) return false;
 
     setSessionMutationLabel("Creating session...");
@@ -240,22 +247,13 @@ export default function useSessionsData({
         pair_games: planner.config.pair_games,
         pair_start_round: planner.config.pair_start_round,
         max_consecutive_rest: planner.config.max_consecutive_rest,
-        admin_token: adminToken,
       });
       const normalized = normalizeSession(session);
       rememberSessionAccess(normalized.sessionId, normalized.editToken);
-      setOrganizerToken(adminToken);
-      setOrganizerDialogError(null);
-      setOrganizerDialogOpen(false);
       refreshSupportingViews();
       return normalized;
     } catch (error) {
-      if (error.message === "Organizer token required to start a session") {
-        setOrganizerDialogError(error.message);
-        setOrganizerTokenDraft(adminToken);
-      } else {
-        setPageError(error.message);
-      }
+      setPageError(error.message);
       return null;
     } finally {
       setSessionMutationLoading(false);
@@ -264,25 +262,7 @@ export default function useSessionsData({
 
   async function handleLockRoster(planner) {
     if (!planner.roster) return;
-
-    if (!organizerToken.trim()) {
-      setOrganizerDialogError(null);
-      setOrganizerTokenDraft(organizerToken);
-      setOrganizerDialogOpen(true);
-      return;
-    }
-
-    const startedSession = await createPlannerSession(planner, organizerToken.trim());
-    if (!startedSession) {
-      setOrganizerDialogOpen(true);
-    }
-    return startedSession;
-  }
-
-  async function handleOrganizerDialogSubmit(planner) {
-    const nextToken = organizerTokenDraft.trim();
-    if (!nextToken) return;
-    return createPlannerSession(planner, nextToken);
+    return createPlannerSession(planner);
   }
 
   const activeSessions = sessions.filter((session) => session.status !== "completed");
@@ -302,16 +282,9 @@ export default function useSessionsData({
     renameLoading,
     renameError,
     shareFeedback,
-    organizerToken,
-    organizerTokenDraft,
-    organizerDialogOpen,
-    organizerDialogError,
     sessionMutationLoading,
     sessionMutationLabel,
     pageError,
-    setOrganizerTokenDraft,
-    setOrganizerDialogOpen,
-    setOrganizerDialogError,
     clearPageError,
     loadSessions,
     loadHistorySessions,
@@ -323,6 +296,5 @@ export default function useSessionsData({
     handleCopyShareLink,
     handleDeleteSession,
     handleLockRoster,
-    handleOrganizerDialogSubmit,
   };
 }

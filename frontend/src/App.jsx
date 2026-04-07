@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { matchPath, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import AppShell from "./components/AppShell";
+import AuthDialog from "./components/AuthDialog";
 import { appCopy } from "./content/uiCopy";
 import PlannerRoute from "./routes/PlannerRoute";
 import PlayersRoute from "./routes/PlayersRoute";
 import ActiveSessionsRoute from "./routes/ActiveSessionsRoute";
 import HistoryRoute from "./routes/HistoryRoute";
 import PlayerStatsRoute from "./routes/PlayerStatsRoute";
+import ProfileRoute from "./routes/ProfileRoute";
 import ScoringRoute from "./routes/ScoringRoute";
 import useSessionTiming from "./hooks/useSessionTiming";
 import usePlayerStatsData from "./hooks/usePlayerStatsData";
@@ -14,6 +16,7 @@ import usePlayersData from "./hooks/usePlayersData";
 import usePlannerState from "./hooks/usePlannerState";
 import useSessionsData from "./hooks/useSessionsData";
 import useScoringSession from "./hooks/useScoringSession";
+import useAuth from "./hooks/useAuth";
 import {
   PLAIN_SESSION_WAIT_LABELS,
   ROUTE_PATHS,
@@ -97,84 +100,22 @@ function RenameSessionDialog({
   );
 }
 
-function OrganizerTokenDialog({
-  open,
-  loading,
-  value,
-  error,
-  onChange,
-  onCancel,
-  onSubmit,
-}) {
-  if (!open) return null;
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
-      <div className="w-full max-w-md rounded-2xl border border-amber-200 bg-white p-5 shadow-xl">
-        <p className="text-sm font-semibold uppercase tracking-wide text-amber-600">{appCopy.organizerDialog.eyebrow}</p>
-        <h3 className="mt-1 text-lg font-semibold text-gray-900">{appCopy.organizerDialog.title}</h3>
-        <p className="mt-2 text-sm text-gray-600">
-          {appCopy.organizerDialog.description}
-        </p>
-        <form
-          className="mt-4 space-y-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSubmit();
-          }}
-        >
-          <label className="block text-sm font-medium text-gray-700" htmlFor="organizer-token">
-            {appCopy.organizerDialog.fieldLabel}
-            <input
-              id="organizer-token"
-              type="password"
-              value={value}
-              onChange={(event) => onChange(event.target.value)}
-              disabled={loading}
-              placeholder={appCopy.organizerDialog.fieldPlaceholder}
-              className="mt-2 block w-full rounded-lg border border-gray-300 bg-white px-3 py-3 text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-500/20 disabled:bg-gray-100"
-            />
-          </label>
-          {error ? (
-            <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
-            </div>
-          ) : null}
-          <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={loading}
-              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-60"
-            >
-              {appCopy.organizerDialog.cancel}
-            </button>
-            <button
-              type="submit"
-              disabled={loading || !value.trim()}
-              className="inline-flex min-h-11 items-center justify-center rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
-            >
-              {loading ? appCopy.organizerDialog.submitLoading : appCopy.organizerDialog.submit}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
-
 export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const auth = useAuth();
+  const hasOrganizerWorkspace = Boolean(auth.isOrganizer && auth.activeWorkspace?.workspace_id);
 
   const view = getViewFromPathname(location.pathname);
   const scoringRouteMatch = matchPath({ path: ROUTE_PATHS.scoring, end: true }, location.pathname);
   const routeSessionId = scoringRouteMatch?.params?.sessionId || null;
   const routeEditToken = new URLSearchParams(location.search).get("edit");
+  const hideGlobalHeader = !auth.currentUser && view === "planner";
 
-  const playerStats = usePlayerStatsData({ view });
+  const playerStats = usePlayerStatsData({ enabled: hasOrganizerWorkspace, view });
   const players = usePlayersData({
+    enabled: hasOrganizerWorkspace,
     onPlayerDeleted: () => {},
     refreshPlayerStats: playerStats.loadPlayerStats,
   });
@@ -183,6 +124,7 @@ export default function App() {
     navigateToPlanner: () => navigate(ROUTE_PATHS.planner),
   });
   const sessions = useSessionsData({
+    enabled: hasOrganizerWorkspace,
     navigate,
     refreshPlayerStats: playerStats.loadPlayerStats,
     view,
@@ -220,6 +162,16 @@ export default function App() {
     setMobileNavOpen(false);
   }
 
+  function handleAuthSuccess(user) {
+    if (!user) return null;
+    navigate(ROUTE_PATHS.planner);
+    setMobileNavOpen(false);
+    sessions.clearPageError();
+    scoring.clearPageError();
+    playerStats.clearPageError();
+    return user;
+  }
+
   async function handleOpenSession(sessionId) {
     await scoring.openSession(sessionId, sessions.sessionAccess[sessionId] || null, location.pathname + location.search);
   }
@@ -239,6 +191,17 @@ export default function App() {
   }
 
   async function handleLockRoster() {
+    if (!auth.currentUser) {
+      auth.openAuthDialog("login");
+      return;
+    }
+
+    if (!hasOrganizerWorkspace) {
+      auth.setAuthError("Organizer access with an active workspace is required to start a session.");
+      auth.openAuthDialog("login");
+      return;
+    }
+
     const startedSession = await sessions.handleLockRoster(planner);
     if (!startedSession) return;
 
@@ -248,14 +211,15 @@ export default function App() {
     navigate(buildSessionPath(startedSession.sessionId, startedSession.editToken));
   }
 
-  async function handleOrganizerDialogSubmit() {
-    const startedSession = await sessions.handleOrganizerDialogSubmit(planner);
-    if (!startedSession) return;
-
-    scoring.setCurrentSession(startedSession);
-    planner.resetAfterSessionStart();
-    scoring.setPreviousNonScoringPath(ROUTE_PATHS.sessions);
-    navigate(buildSessionPath(startedSession.sessionId, startedSession.editToken));
+  function handleRequireOrganizerLogin() {
+    if (!auth.currentUser) {
+      auth.openAuthDialog("login");
+      return;
+    }
+    if (!hasOrganizerWorkspace) {
+      auth.setAuthError("This account is signed in, but it does not have organizer workspace access.");
+      auth.openAuthDialog("login");
+    }
   }
 
   function handleBackToPlanner() {
@@ -265,11 +229,13 @@ export default function App() {
 
   const navItems = [
     { key: "planner", label: "Planner", icon: "planner", path: ROUTE_PATHS.planner },
-    { key: "players", label: "Players", icon: "players", path: ROUTE_PATHS.players },
-    { key: "sessions", label: "Active Sessions", icon: "sessions", path: ROUTE_PATHS.sessions },
-    { key: "history", label: "History", icon: "history", path: ROUTE_PATHS.history },
-    { key: "player-stats", label: "Player Stats", icon: "stats", path: ROUTE_PATHS.playerStats },
   ];
+  if (auth.currentUser) {
+    navItems.splice(1, 0, { key: "players", label: "Players", icon: "players", path: ROUTE_PATHS.players });
+    navItems.splice(2, 0, { key: "sessions", label: "Active Sessions", icon: "sessions", path: ROUTE_PATHS.sessions });
+    navItems.push({ key: "history", label: "History", icon: "history", path: ROUTE_PATHS.history });
+    navItems.push({ key: "player-stats", label: "Player Stats", icon: "stats", path: ROUTE_PATHS.playerStats });
+  }
 
   const sessionsRoute = {
     ...sessions,
@@ -287,6 +253,12 @@ export default function App() {
     <AppShell
       view={view}
       currentSessionName={scoring.currentSession?.name || null}
+      currentUser={auth.currentUser}
+      isOrganizer={hasOrganizerWorkspace}
+      activeWorkspace={auth.activeWorkspace}
+      authLoading={auth.authLoading}
+      onOpenAuth={auth.openAuthDialog}
+      onLogout={auth.handleLogout}
       mobileNavOpen={mobileNavOpen}
       onToggleMobileNav={() => setMobileNavOpen((current) => !current)}
       onCloseMobileNav={() => setMobileNavOpen(false)}
@@ -301,6 +273,7 @@ export default function App() {
         setMobileNavOpen(false);
       }}
       navItems={navItems}
+      hideHeader={hideGlobalHeader}
     >
       {sessionLoading && view === "scoring" ? (
         <div className="fixed inset-x-4 bottom-4 z-50 sm:inset-x-auto sm:right-4 sm:top-20 sm:bottom-auto sm:w-[360px]">
@@ -315,24 +288,17 @@ export default function App() {
         </div>
       ) : null}
 
-      <OrganizerTokenDialog
-        open={sessions.organizerDialogOpen}
-        loading={sessionLoading}
-        value={sessions.organizerTokenDraft}
-        error={sessions.organizerDialogError}
-        onChange={(value) => {
-          sessions.setOrganizerTokenDraft(value);
-          if (sessions.organizerDialogError) {
-            sessions.setOrganizerDialogError(null);
-          }
-        }}
-        onCancel={() => {
-          if (sessionLoading) return;
-          sessions.setOrganizerDialogOpen(false);
-          sessions.setOrganizerDialogError(null);
-          sessions.setOrganizerTokenDraft(sessions.organizerToken);
-        }}
-        onSubmit={handleOrganizerDialogSubmit}
+      <AuthDialog
+        open={auth.authDialogOpen}
+        mode={auth.authMode}
+        loading={auth.authLoading}
+        error={auth.authError}
+        googleClientId={auth.googleClientId}
+        onClose={auth.closeAuthDialog}
+        onModeChange={auth.setAuthMode}
+        onLogin={async (payload) => handleAuthSuccess(await auth.handleLogin(payload))}
+        onSignup={async (payload) => handleAuthSuccess(await auth.handleSignup(payload))}
+        onGoogleCredential={async (credential) => handleAuthSuccess(await auth.handleGoogleLogin(credential))}
       />
 
       {appError ? (
@@ -376,6 +342,10 @@ export default function App() {
                 ...planner,
                 directoryPlayers: players.directoryPlayers,
               }}
+              canPlan={hasOrganizerWorkspace}
+              currentUser={auth.currentUser}
+              activeWorkspace={auth.activeWorkspace}
+              onRequireOrganizerLogin={handleRequireOrganizerLogin}
               navigateToView={navigateToView}
               sessionLoading={sessionLoading}
               onLockRoster={handleLockRoster}
@@ -383,22 +353,48 @@ export default function App() {
             />
           }
         />
-        <Route path={ROUTE_PATHS.players} element={<PlayersRoute players={players} />} />
+        <Route
+          path={ROUTE_PATHS.players}
+          element={
+            hasOrganizerWorkspace ? (
+              <PlayersRoute
+                players={players}
+                canManagePlayers={hasOrganizerWorkspace}
+                onRequireOrganizerLogin={handleRequireOrganizerLogin}
+              />
+            ) : (
+              <Navigate to={ROUTE_PATHS.planner} replace />
+            )
+          }
+        />
         <Route
           path={ROUTE_PATHS.sessions}
           element={
-            <ActiveSessionsRoute
-              sessions={sessionsRoute}
-              sessionWaitText={timing.sessionWaitText}
-              currentSessionId={scoring.currentSession?.sessionId || null}
-            />
+            hasOrganizerWorkspace ? (
+              <ActiveSessionsRoute
+                sessions={sessionsRoute}
+                canManageSessions={hasOrganizerWorkspace}
+                onRequireOrganizerLogin={handleRequireOrganizerLogin}
+                sessionWaitText={timing.sessionWaitText}
+                currentSessionId={scoring.currentSession?.sessionId || null}
+              />
+            ) : (
+              <Navigate to={ROUTE_PATHS.planner} replace />
+            )
           }
         />
         <Route
           path={ROUTE_PATHS.history}
-          element={<HistoryRoute history={sessions} sessions={sessionsRoute} />}
+          element={hasOrganizerWorkspace ? <HistoryRoute history={sessions} sessions={sessionsRoute} /> : <Navigate to={ROUTE_PATHS.planner} replace />}
         />
-        <Route path={ROUTE_PATHS.playerStats} element={<PlayerStatsRoute playerStats={playerStats} />} />
+        <Route
+          path={ROUTE_PATHS.profile}
+          element={hasOrganizerWorkspace ? <ProfileRoute auth={auth} /> : <Navigate to={ROUTE_PATHS.planner} replace />}
+        />
+        <Route
+          path={ROUTE_PATHS.playerStats}
+          element={hasOrganizerWorkspace ? <PlayerStatsRoute playerStats={playerStats} /> : <Navigate to={ROUTE_PATHS.planner} replace />}
+        />
         <Route path={ROUTE_PATHS.scoring} element={<ScoringRoute scoring={scoringRoute} />} />
       </Routes>
 

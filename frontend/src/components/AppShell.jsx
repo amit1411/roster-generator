@@ -71,6 +71,15 @@ function NavIcon({ kind, className = "h-4 w-4" }) {
           <path d="M16.5 16V6" />
         </svg>
       );
+    case "profile":
+      return (
+        <svg {...commonProps}>
+          <path d="M12 12.25a3.75 3.75 0 1 0 0-7.5 3.75 3.75 0 0 0 0 7.5Z" />
+          <path d="M5.25 19.25a6.75 6.75 0 0 1 13.5 0" />
+          <path d="M17.75 7.5h1.75" />
+          <path d="M18.625 6.625v1.75" />
+        </svg>
+      );
     default:
       return null;
   }
@@ -105,16 +114,24 @@ function MenuIcon({ open, className = "h-5 w-5" }) {
 export default function AppShell({
   view,
   currentSessionName,
+  currentUser,
+  isOrganizer,
+  activeWorkspace,
+  authLoading,
+  onOpenAuth,
+  onLogout,
   mobileNavOpen,
   onToggleMobileNav,
   onCloseMobileNav,
   onNavigate,
   onHome,
   navItems,
+  hideHeader = false,
   children,
 }) {
   return (
     <div className="min-h-screen bg-gray-50">
+      {!hideHeader ? (
       <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
         <div className="max-w-7xl mx-auto px-4 py-4">
           <div className="flex items-center justify-between gap-3">
@@ -128,6 +145,46 @@ export default function AppShell({
                 ) : null}
               </div>
             </button>
+
+            <div className="hidden items-center gap-3 md:flex">
+              {currentUser ? (
+                <>
+                  <div className="text-right">
+                    <p className="text-sm font-semibold text-slate-900">{currentUser.display_name}</p>
+                    <p className="text-xs text-slate-500">
+                      {isOrganizer ? (activeWorkspace?.name || "Organizer workspace") : "Signed in"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onNavigate("profile")}
+                    className={`inline-flex min-h-10 items-center justify-center rounded-full px-4 py-2 text-sm font-semibold transition-colors ${
+                      view === "profile"
+                        ? "bg-slate-900 text-white"
+                        : "border border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    Profile
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onLogout}
+                    disabled={authLoading}
+                    className="inline-flex min-h-10 items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    Logout
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => onOpenAuth("login")}
+                  className="inline-flex min-h-10 items-center justify-center rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                >
+                  Login
+                </button>
+              )}
+            </div>
 
             <button
               type="button"
@@ -170,6 +227,45 @@ export default function AppShell({
                 className="fixed inset-x-4 top-[6.5rem] z-50 rounded-3xl border border-gray-200 bg-white p-3 shadow-2xl"
               >
                 <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-[0.24em] text-gray-400">Navigate</p>
+                <div className="mb-3 rounded-2xl bg-slate-50 p-3">
+                  {currentUser ? (
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-900">{currentUser.display_name}</p>
+                        <p className="text-xs text-slate-500">{isOrganizer ? (activeWorkspace?.name || "Organizer workspace") : currentUser.email}</p>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => onNavigate("profile")}
+                          className={`inline-flex min-h-11 w-full items-center justify-center rounded-2xl px-4 py-3 text-sm font-semibold ${
+                            view === "profile"
+                              ? "bg-slate-900 text-white"
+                              : "border border-slate-300 bg-white text-slate-700"
+                          }`}
+                        >
+                          Profile
+                        </button>
+                        <button
+                          type="button"
+                          onClick={onLogout}
+                          disabled={authLoading}
+                          className="inline-flex min-h-11 w-full items-center justify-center rounded-2xl border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-700"
+                        >
+                          Logout
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => onOpenAuth("login")}
+                      className="inline-flex min-h-11 w-full items-center justify-center rounded-2xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white"
+                    >
+                      Login
+                    </button>
+                  )}
+                </div>
                 <div className="grid gap-2">
                   {navItems.map((item) => {
                     const isActive = view === item.key;
@@ -195,8 +291,9 @@ export default function AppShell({
           ) : null}
         </div>
       </header>
+      ) : null}
 
-      <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
+      <main className={`mx-auto px-4 ${hideHeader ? "max-w-6xl py-8 sm:py-10" : "max-w-7xl py-6"}`}>{children}</main>
     </div>
   );
 }

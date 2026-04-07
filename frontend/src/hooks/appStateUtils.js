@@ -4,7 +4,7 @@ import { buildKnockoutRounds, createScoresForRounds } from "../scoring";
 export const PLANNER_STORAGE_KEY = "badminton-roster:planner";
 export const SESSION_STORAGE_KEY = "badminton-roster:session";
 export const SESSION_ACCESS_STORAGE_KEY = "badminton-roster:session-access";
-export const ORGANIZER_TOKEN_STORAGE_KEY = "badminton-roster:organizer-token";
+export const AUTH_STORAGE_KEY = "badminton-roster:auth";
 export const SESSION_POLL_INTERVAL_MS = 12000;
 export const ACTIVE_EDIT_GRACE_MS = 15000;
 export const DUPLICATE_KNOCKOUT_VIOLATION_PREFIX = "Duplicate knockout matchup:";
@@ -35,6 +35,7 @@ export const ROUTE_PATHS = {
   sessions: "/sessions",
   scoring: "/sessions/:sessionId",
   history: "/history",
+  profile: "/profile",
   playerStats: "/stats",
 };
 
@@ -244,6 +245,8 @@ export function getRoutePathForView(view) {
       return ROUTE_PATHS.sessions;
     case "history":
       return ROUTE_PATHS.history;
+    case "profile":
+      return ROUTE_PATHS.profile;
     case "player-stats":
       return ROUTE_PATHS.playerStats;
     default:
@@ -256,6 +259,7 @@ export function getViewFromPathname(pathname) {
   if (matchPath({ path: ROUTE_PATHS.players, end: true }, pathname)) return "players";
   if (matchPath({ path: ROUTE_PATHS.sessions, end: true }, pathname)) return "sessions";
   if (matchPath({ path: ROUTE_PATHS.history, end: true }, pathname)) return "history";
+  if (matchPath({ path: ROUTE_PATHS.profile, end: true }, pathname)) return "profile";
   if (matchPath({ path: ROUTE_PATHS.playerStats, end: true }, pathname)) return "player-stats";
   if (matchPath({ path: ROUTE_PATHS.scoring, end: true }, pathname)) return "scoring";
   if (pathname === ROUTE_PATHS.root) return "root";

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { createPlayer, deletePlayer, listPlayers, updatePlayer } from "../api";
 import { normalizePlayerDirectoryEntry } from "./appStateUtils";
 
-export default function usePlayersData({ onPlayerDeleted, refreshPlayerStats }) {
+export default function usePlayersData({ enabled = false, onPlayerDeleted, refreshPlayerStats }) {
   const [directoryPlayers, setDirectoryPlayers] = useState([]);
   const [playersLoading, setPlayersLoading] = useState(false);
   const [createPlayerLoading, setCreatePlayerLoading] = useState(false);
@@ -14,10 +14,21 @@ export default function usePlayersData({ onPlayerDeleted, refreshPlayerStats }) 
   const [deletePlayerError, setDeletePlayerError] = useState(null);
 
   useEffect(() => {
+    if (!enabled) {
+      setDirectoryPlayers([]);
+      setDirectoryError(null);
+      setPlayersLoading(false);
+      return;
+    }
     void loadPlayers();
-  }, []);
+  }, [enabled]);
 
   async function loadPlayers() {
+    if (!enabled) {
+      setDirectoryPlayers([]);
+      setDirectoryError(null);
+      return [];
+    }
     setPlayersLoading(true);
     setDirectoryError(null);
     try {

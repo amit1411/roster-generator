@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { getOrganizerAuthHeaders } from "./helpers/session";
 
 const API_BASE = process.env.PLAYWRIGHT_API_BASE_URL || "http://127.0.0.1:8010";
-const ADMIN_TOKEN = process.env.PLAYWRIGHT_ADMIN_TOKEN || "thisismytoken";
 
 test("revalidating an edited roster recalculates fixed-pair violations", async ({ request }) => {
   const generateResponse = await request.post(`${API_BASE}/api/generate`, {
@@ -46,7 +46,9 @@ test("revalidating an edited roster recalculates fixed-pair violations", async (
 });
 
 test("session creation rejects malformed manually edited rosters", async ({ request }) => {
+  const headers = await getOrganizerAuthHeaders(request);
   const response = await request.post(`${API_BASE}/api/sessions`, {
+    headers,
     data: {
       name: "Invalid Edited Roster",
       roster: {
@@ -84,7 +86,6 @@ test("session creation rejects malformed manually edited rosters", async ({ requ
       pair_games: 1,
       pair_start_round: 1,
       max_consecutive_rest: 1,
-      admin_token: ADMIN_TOKEN,
     },
   });
 

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { loginAsOrganizer } from "./helpers/auth";
 import { navigateToSection } from "./helpers/navigation";
 import { createPlayer, createSharedSession, generateRoster, postRoundAction, postScore } from "./helpers/session";
 
@@ -51,6 +52,7 @@ test("deleting a player from the directory keeps historical stats unless request
   });
 
   await page.goto("/");
+  await loginAsOrganizer(page);
   await navigateToSection(page, "Players");
 
   const directorySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Registered players" }) });
@@ -61,7 +63,6 @@ test("deleting a player from the directory keeps historical stats unless request
   const deleteDialog = page.locator("div.fixed.inset-0").filter({ hasText: "This action is intentionally strict" });
   await expect(deleteDialog.getByText("This action is intentionally strict")).toBeVisible();
   await expect(deleteDialog.getByText("Also delete historical player records")).toBeVisible();
-  await deleteDialog.getByLabel("Admin token").fill("thisismytoken");
   await deleteDialog.getByRole("button", { name: "Delete Player" }).click();
 
   await expect(directoryCard).toHaveCount(0);
@@ -73,18 +74,20 @@ test("deleting a player from the directory keeps historical stats unless request
 test("recreating a deleted player restores the same player name cleanly", async ({ page, request }, testInfo) => {
   const suffix = testInfo.project.name;
   const fullName = `Restore Player ${suffix}`;
-  const shortName = `RP-${suffix}`;
+  const restoredShortName = `RP-${suffix}`;
   const helperPlayers = [
-    { fullName: `Restore Helper Bravo ${suffix}`, shortName: `RHB-${suffix}` },
-    { fullName: `Restore Helper Charlie ${suffix}`, shortName: `RHC-${suffix}` },
-    { fullName: `Restore Helper Delta ${suffix}`, shortName: `RHD-${suffix}` },
+    { fullName: `Restore Helper Bravo ${suffix}`, shortName: `Restore Helper Bravo ${suffix}` },
+    { fullName: `Restore Helper Charlie ${suffix}`, shortName: `Restore Helper Charlie ${suffix}` },
+    { fullName: `Restore Helper Delta ${suffix}`, shortName: `Restore Helper Delta ${suffix}` },
   ];
 
+  const createdPlayers = [];
+  createdPlayers.push(await createPlayer(request, { fullName, shortName: fullName }));
   for (const player of helperPlayers) {
-    await createPlayer(request, player);
+    createdPlayers.push(await createPlayer(request, player));
   }
 
-   const roster = await generateRoster(request, {
+  const roster = await generateRoster(request, {
     players: [fullName, ...helperPlayers.map((player) => player.fullName)],
     num_courts: 1,
     court_numbers: ["1"],
@@ -100,6 +103,11 @@ test("recreating a deleted player restores the same player name cleanly", async 
       league_meetings: 1,
       knockout_qualifiers: 4,
     },
+    players: createdPlayers.map((player) => ({
+      player_id: player.player_id,
+      full_name: player.full_name,
+      short_name: player.short_name,
+    })),
   });
 
   await postRoundAction(request, session.session_id, session.edit_token, "start-round", {
@@ -126,6 +134,7 @@ test("recreating a deleted player restores the same player name cleanly", async 
   });
 
   await page.goto("/");
+  await loginAsOrganizer(page);
   await navigateToSection(page, "Players");
 
   const directorySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Registered players" }) });
@@ -137,12 +146,11 @@ test("recreating a deleted player restores the same player name cleanly", async 
   const refreshedDirectoryCard = refreshedDirectorySection.locator("div.rounded-2xl.border.border-gray-200.bg-gray-50").filter({ hasText: fullName }).first();
   await refreshedDirectoryCard.getByRole("button", { name: "Delete", exact: true }).click();
   const deleteDialog = page.locator("div.fixed.inset-0").filter({ hasText: "This action is intentionally strict" });
-  await deleteDialog.getByLabel("Admin token").fill("thisismytoken");
   await deleteDialog.getByRole("button", { name: "Delete Player" }).click();
   await expect(refreshedDirectoryCard).toHaveCount(0);
 
   await page.getByLabel("Full Name").fill(fullName);
-  await page.getByLabel("Short Name").fill(shortName);
+  await page.getByLabel("Short Name").fill(restoredShortName);
   await page.getByRole("button", { name: "Create Player" }).click();
 
   const restoredCard = refreshedDirectorySection.locator("div.rounded-2xl.border.border-gray-200.bg-gray-50").filter({ hasText: fullName }).first();
@@ -153,7 +161,7 @@ test("recreating a deleted player restores the same player name cleanly", async 
 
   await navigateToSection(page, "Planner");
   const searchInput = page.getByPlaceholder("Search players...");
-  await searchInput.fill(shortName);
+  await searchInput.fill(restoredShortName);
   const directoryMatch = page.locator("section").filter({ has: page.getByRole("heading", { name: "Player Directory" }) });
   await expect(directoryMatch.getByText(fullName, { exact: true }).first()).toBeVisible();
 });

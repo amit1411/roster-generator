@@ -63,6 +63,37 @@ function PlannerStepCard({ step, title, description, tone = "default", children 
   );
 }
 
+function LandingBrand() {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#4f46e5,#0ea5e9,#14b8a6)] shadow-[0_10px_30px_rgba(79,70,229,0.18)]">
+        <svg viewBox="0 0 48 48" fill="none" aria-hidden="true" className="h-9 w-9">
+          <path d="M24 11.5 17.5 19 24 22.2 30.5 19 24 11.5Z" fill="white" fillOpacity="0.96" />
+          <path d="M24 23.8 15 20.1 18.1 31.5 24 37l5.9-5.5L33 20.1l-9 3.7Z" fill="white" fillOpacity="0.92" />
+          <path d="M20.8 27.4 18.7 33.1M24 26.9V37M27.2 27.4l2.1 5.7" stroke="#4F46E5" strokeWidth="1.7" strokeLinecap="round" />
+        </svg>
+      </div>
+      <div className="min-w-0">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-indigo-500">{appCopy.brand.eyebrow}</p>
+        <h1 className="truncate text-lg font-bold text-slate-950 sm:text-xl">{appCopy.brand.title}</h1>
+      </div>
+    </div>
+  );
+}
+
+function LandingBadge({ children, tone = "light" }) {
+  const tones = {
+    light: "border-sky-200/70 bg-white/80 text-slate-700",
+    dark: "border-white/14 bg-white/10 text-slate-100",
+  };
+
+  return (
+    <span className={`inline-flex items-center rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] ${tones[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
 function PlannerStepper({ currentStep, onStepChange }) {
   const steps = [
     { id: 1, label: "Players & Pairs" },
@@ -144,7 +175,17 @@ function BadgeIcon({ kind, className = "h-4 w-4" }) {
   }
 }
 
-export default function PlannerRoute({ planner, navigateToView, sessionLoading, onLockRoster, timing }) {
+export default function PlannerRoute({
+  planner,
+  canPlan,
+  currentUser,
+  activeWorkspace,
+  onRequireOrganizerLogin,
+  navigateToView,
+  sessionLoading,
+  onLockRoster,
+  timing,
+}) {
   const {
     plannerStep,
     setPlannerStep,
@@ -180,6 +221,89 @@ export default function PlannerRoute({ planner, navigateToView, sessionLoading, 
     handleRosterRoundTap,
   } = planner;
 
+  if (!canPlan) {
+    return (
+      <div className="space-y-5">
+        <section className="relative overflow-hidden rounded-[34px] border border-[#d9e3ea] bg-[#f8f4ec] shadow-[0_18px_50px_rgba(15,23,42,0.06)]">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(249,115,22,0.12),_transparent_28%),radial-gradient(circle_at_85%_20%,_rgba(14,165,233,0.12),_transparent_24%),linear-gradient(180deg,_rgba(255,255,255,0.78),_rgba(255,255,255,0.48))]" />
+          <div className="relative p-6 sm:p-8 lg:p-10">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <button type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} className="max-w-full text-left">
+                <LandingBrand />
+              </button>
+              <button
+                type="button"
+                onClick={onRequireOrganizerLogin}
+                className="inline-flex min-h-10 w-full items-center justify-center self-start rounded-full border border-slate-300/80 bg-white/70 px-4 py-2.5 text-sm font-semibold text-slate-800 shadow-sm transition hover:bg-white sm:min-h-11 sm:w-auto"
+              >
+                Login
+              </button>
+            </div>
+
+            <div className="mt-8 max-w-3xl sm:mt-12">
+              <div className="flex flex-wrap gap-2">
+                <LandingBadge>Private organizer workspace</LandingBadge>
+                <span className="hidden sm:inline-flex">
+                  <LandingBadge>Minimal setup</LandingBadge>
+                </span>
+              </div>
+
+              <p className="mt-8 text-sm font-semibold uppercase tracking-[0.24em] text-[#b45309]">{appCopy.planner.eyebrow}</p>
+              <h2
+                className="mt-3 max-w-2xl text-[3.05rem] font-semibold leading-[0.98] text-slate-950 sm:text-5xl"
+                style={{ fontFamily: 'Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif' }}
+              >
+                Build the next session from scratch
+              </h2>
+              <p className="mt-4 max-w-lg text-[15px] leading-7 text-slate-700 sm:mt-5 sm:max-w-xl sm:text-base sm:leading-8">
+                Add players, generate the roster, and run the session from one calm organizer console.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
+          <div className="rounded-[28px] border border-[#ead3a0] bg-[#fff6de] p-6 shadow-[0_14px_40px_rgba(180,83,9,0.08)]">
+            <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[#b45309]">Organizer workspace</p>
+            <h3
+              className="mt-3 text-3xl font-semibold leading-tight text-slate-950"
+              style={{ fontFamily: 'Iowan Old Style, Palatino Linotype, Book Antiqua, Georgia, serif' }}
+            >
+              Sign in to plan tournaments
+            </h3>
+            <p className="mt-4 max-w-md text-sm leading-7 text-[#92400e]">
+              Players, sessions, history, and stats stay inside your own workspace.
+            </p>
+            <div className="mt-6">
+              <button
+                type="button"
+                onClick={onRequireOrganizerLogin}
+                className="inline-flex min-h-12 items-center justify-center rounded-[18px] bg-[#c45d0b] px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-200/60 transition hover:bg-[#ad4e08]"
+              >
+                Login / Sign Up
+              </button>
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="rounded-[28px] border border-[#d9e3ea] bg-white p-5 shadow-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Players</p>
+              <p className="mt-3 text-lg font-semibold text-slate-900">Register once</p>
+            </div>
+            <div className="rounded-[28px] border border-[#d9e3ea] bg-white p-5 shadow-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Sessions</p>
+              <p className="mt-3 text-lg font-semibold text-slate-900">Run live</p>
+            </div>
+            <div className="rounded-[28px] border border-[#d9e3ea] bg-white p-5 shadow-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Review</p>
+              <p className="mt-3 text-lg font-semibold text-slate-900">Look back later</p>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       <KnockoutDuplicateDialog
@@ -211,7 +335,8 @@ export default function PlannerRoute({ planner, navigateToView, sessionLoading, 
         </div>
       </section>
 
-      <div className="space-y-6">
+      {canPlan ? (
+        <div className="space-y-6">
         <section className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
           <PlannerStepper currentStep={plannerStep} onStepChange={setPlannerStep} />
         </section>
@@ -425,7 +550,8 @@ export default function PlannerRoute({ planner, navigateToView, sessionLoading, 
             ) : null}
           </div>
         ) : null}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }

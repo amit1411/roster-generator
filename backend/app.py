@@ -12,7 +12,7 @@ from copy import deepcopy
 
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
@@ -27,16 +27,42 @@ load_local_env()
 
 from cache import cache
 from database import (
+    AuthIdentityRecord,
     CompletedSessionStatsRecord,
     PlayerRecord,
     PlayerPartnerSessionStatsRecord,
     PlayerSessionStatsRecord,
     PlayerStatsSummaryRecord,
+    SessionPermissionRecord,
     SessionRoundRecord,
     SessionScoreRecord,
     SharedSessionRecord,
+    UserPlayerLinkRecord,
+    UserRecord,
+    UserRoleRecord,
+    WorkspaceMembershipRecord,
+    WorkspaceRecord,
     get_db_session,
     init_db,
+)
+from auth import (
+    GOOGLE_CLIENT_ID,
+    authenticate_password_user,
+    create_auth_session,
+    create_password_user,
+    get_active_workspace,
+    get_current_auth_session,
+    ensure_session_owner,
+    ensure_default_workspace,
+    get_current_user,
+    get_or_create_google_user,
+    normalize_email,
+    require_organizer,
+    revoke_auth_session,
+    serialize_user,
+    serialize_workspace,
+    switch_active_workspace,
+    verify_google_token,
 )
 from roster_engine import (
     find_duplicate_fixed_pair_matchups,
@@ -48,7 +74,6 @@ from roster_engine import (
 
 app = FastAPI(title="Badminton Roster API")
 
-ADMIN_RECOVERY_TOKEN = os.getenv("ADMIN_RECOVERY_TOKEN", "thisismytoken")
 DEFAULT_PLAYER_DIRECTORY = [
     "DG", "Hari", "Ashok", "Jitu", "Satya", "Krupa", "Kishore", "Malli",
     "Chiru", "Vivek", "Dhawan", "Avinash", "Vikram", "Marideva", "Sai",
@@ -67,8 +92,6 @@ app.add_middleware(
 def startup():
     init_db()
     cache.initialize()
-    with get_db_session() as db:
-        _ensure_player_registry(db)
 
 
 def _cache_ttl(name: str, default_seconds: int) -> int:
@@ -209,7 +232,6 @@ class SharedSessionCreateRequest(BaseModel):
     pair_games: int = 3
     pair_start_round: int = 5
     max_consecutive_rest: int = 1
-    admin_token: str | None = None
 
 
 class SharedSessionResponse(BaseModel):
@@ -385,8 +407,87 @@ class PlayerUpdateRequest(PlayerCreateRequest):
 
 
 class PlayerDeleteRequest(BaseModel):
-    admin_token: str
     delete_history: bool = False
+
+
+class AuthGoogleLoginRequest(BaseModel):
+    credential: str
+
+
+class AuthPasswordSignupRequest(BaseModel):
+    email: str
+    password: str
+    display_name: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str):
+        normalized = normalize_email(value)
+        if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+            raise ValueError("A valid email is required")
+        if len(normalized) > 255:
+            raise ValueError("Email must be 255 characters or fewer")
+        return normalized
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, value: str):
+        if len(value) < 8:
+            raise ValueError("Password must be at least 8 characters")
+        if len(value) > 200:
+            raise ValueError("Password must be 200 characters or fewer")
+        return value
+
+    @field_validator("display_name")
+    @classmethod
+    def validate_display_name(cls, value: str):
+        cleaned = " ".join(value.strip().split())
+        if not cleaned:
+            raise ValueError("Display name is required")
+        if len(cleaned) > 120:
+            raise ValueError("Display name must be 120 characters or fewer")
+        return cleaned
+
+
+class AuthPasswordLoginRequest(BaseModel):
+    email: str
+    password: str
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, value: str):
+        normalized = normalize_email(value)
+        if "@" not in normalized or normalized.startswith("@") or normalized.endswith("@"):
+            raise ValueError("A valid email is required")
+        return normalized
+
+
+class AuthUserResponse(BaseModel):
+    user_id: str
+    email: str
+    display_name: str
+    roles: list[str]
+    is_organizer: bool
+
+
+class WorkspaceResponse(BaseModel):
+    workspace_id: str
+    name: str
+    workspace_type: str
+    roles: list[str]
+    is_organizer: bool
+
+
+class AuthSessionResponse(BaseModel):
+    user: AuthUserResponse | None = None
+    active_workspace: WorkspaceResponse | None = None
+    workspaces: list[WorkspaceResponse] = []
+    auth_token: str | None = None
+    google_client_id: str | None = None
+
+
+class WorkspaceSelectRequest(BaseModel):
+    workspace_id: str
 
 
 def _create_empty_scores(rounds: list[RoundResult]) -> list[list[dict[str, int | str]]]:
@@ -415,6 +516,16 @@ def _generate_player_id() -> str:
     return f"plr_{secrets.token_hex(4)}"
 
 
+def _workspace_player_key(workspace_id: str | None, normalized_name: str) -> str:
+    if not workspace_id:
+        return normalized_name
+    return f"{workspace_id}::{normalized_name}"
+
+
+def _workspace_stats_player_key(workspace_id: str | None, player_name: str) -> str:
+    return _workspace_player_key(workspace_id, _normalize_player_name(player_name))
+
+
 def _serialize_player(row: PlayerRecord) -> PlayerResponse:
     return PlayerResponse(
         player_id=row.player_id,
@@ -425,16 +536,49 @@ def _serialize_player(row: PlayerRecord) -> PlayerResponse:
         created_at=row.created_at.isoformat() if row.created_at else None,
     )
 
+def _serialize_auth_session(db, user: UserRecord | None, auth_token: str | None = None, request: Request | None = None) -> AuthSessionResponse:
+    active_workspace = None
+    workspaces: list[WorkspaceResponse] = []
+    if user:
+        auth_session = get_current_auth_session(request, db) if request else None
+        active_workspace = get_active_workspace(db, user, auth_session)
+        memberships = []
+        for membership in db.scalars(
+            select(WorkspaceMembershipRecord).where(WorkspaceMembershipRecord.user_id == user.user_id)
+        ).all():
+            workspace = db.get(WorkspaceRecord, membership.workspace_id)
+            if workspace:
+                memberships.append(workspace)
+        unique_workspaces = {workspace.workspace_id: workspace for workspace in memberships}
+        workspaces = [
+            WorkspaceResponse(**serialize_workspace(db, workspace, user_id=user.user_id))
+            for workspace in unique_workspaces.values()
+        ]
+    return AuthSessionResponse(
+        user=AuthUserResponse(**serialize_user(db, user, active_workspace=active_workspace)) if user else None,
+        active_workspace=(
+            WorkspaceResponse(**serialize_workspace(db, active_workspace, user_id=user.user_id))
+            if user and active_workspace
+            else None
+        ),
+        workspaces=workspaces,
+        auth_token=auth_token,
+        google_client_id=GOOGLE_CLIENT_ID or None,
+    )
 
-def _create_player_record(db, full_name: str, short_name: str, *, source: str):
+
+def _create_player_record(db, workspace_id: str, full_name: str, short_name: str, *, source: str):
     normalized_full_name = _normalize_player_name(full_name)
     normalized_short_name = _normalize_player_name(short_name)
     player = PlayerRecord(
         player_id=_generate_player_id(),
+        workspace_id=workspace_id,
         full_name=full_name,
         short_name=short_name,
-        normalized_full_name=normalized_full_name,
-        normalized_short_name=normalized_short_name,
+        lookup_full_name=normalized_full_name,
+        lookup_short_name=normalized_short_name,
+        normalized_full_name=_workspace_player_key(workspace_id, normalized_full_name),
+        normalized_short_name=_workspace_player_key(workspace_id, normalized_short_name),
         aliases=[],
         is_deleted=False,
         deleted_at=None,
@@ -445,15 +589,15 @@ def _create_player_record(db, full_name: str, short_name: str, *, source: str):
     return player
 
 
-def _ensure_legacy_player_record(db, full_name: str, short_name: str):
+def _ensure_legacy_player_record(db, workspace_id: str, full_name: str, short_name: str):
     normalized_full_name = _normalize_player_name(full_name)
     normalized_short_name = _normalize_player_name(short_name)
 
     existing_player = db.scalar(
         select(PlayerRecord).where(
             or_(
-                PlayerRecord.normalized_full_name == normalized_full_name,
-                PlayerRecord.normalized_short_name == normalized_short_name,
+                PlayerRecord.normalized_full_name == _workspace_player_key(workspace_id, normalized_full_name),
+                PlayerRecord.normalized_short_name == _workspace_player_key(workspace_id, normalized_short_name),
             )
         )
     )
@@ -462,10 +606,13 @@ def _ensure_legacy_player_record(db, full_name: str, short_name: str):
 
     values = {
         "player_id": _generate_player_id(),
+        "workspace_id": workspace_id,
         "full_name": full_name,
         "short_name": short_name,
-        "normalized_full_name": normalized_full_name,
-        "normalized_short_name": normalized_short_name,
+        "lookup_full_name": normalized_full_name,
+        "lookup_short_name": normalized_short_name,
+        "normalized_full_name": _workspace_player_key(workspace_id, normalized_full_name),
+        "normalized_short_name": _workspace_player_key(workspace_id, normalized_short_name),
         "aliases": [],
         "is_deleted": False,
         "deleted_at": None,
@@ -482,14 +629,14 @@ def _ensure_legacy_player_record(db, full_name: str, short_name: str):
         db.execute(statement)
         db.flush()
     else:
-        player = _create_player_record(db, full_name, short_name, source="legacy")
+        player = _create_player_record(db, workspace_id, full_name, short_name, source="legacy")
         return player, True
 
     player = db.scalar(
         select(PlayerRecord).where(
             or_(
-                PlayerRecord.normalized_full_name == normalized_full_name,
-                PlayerRecord.normalized_short_name == normalized_short_name,
+                PlayerRecord.normalized_full_name == _workspace_player_key(workspace_id, normalized_full_name),
+                PlayerRecord.normalized_short_name == _workspace_player_key(workspace_id, normalized_short_name),
             )
         )
     )
@@ -515,8 +662,10 @@ def _iter_legacy_player_names(payload: dict):
             yield name
 
 
-def _ensure_player_registry(db):
-    existing_players = db.scalars(select(PlayerRecord).order_by(PlayerRecord.full_name.asc())).all()
+def _ensure_player_registry(db, workspace_id: str):
+    existing_players = db.scalars(
+        select(PlayerRecord).where(PlayerRecord.workspace_id == workspace_id).order_by(PlayerRecord.full_name.asc())
+    ).all()
     active_players = [row for row in existing_players if not row.is_deleted]
     existing_full_names = {row.normalized_full_name for row in existing_players}
     existing_short_names = {row.normalized_short_name for row in existing_players}
@@ -528,7 +677,9 @@ def _ensure_player_registry(db):
     }
     discovered_names = set()
 
-    session_records = db.scalars(select(SharedSessionRecord)).all()
+    session_records = db.scalars(
+        select(SharedSessionRecord).where(SharedSessionRecord.workspace_id == workspace_id)
+    ).all()
     for record in session_records:
         payload = _upgrade_session_payload(deepcopy(record.data))
         for name in _iter_legacy_player_names(payload):
@@ -536,35 +687,15 @@ def _ensure_player_registry(db):
             if cleaned:
                 discovered_names.add(cleaned)
 
-    for row in db.scalars(select(PlayerSessionStatsRecord.player_name)).all():
-        cleaned = " ".join(str(row).strip().split())
-        if cleaned:
-            discovered_names.add(cleaned)
-
-    for row in db.scalars(select(PlayerPartnerSessionStatsRecord.player_name)).all():
-        cleaned = " ".join(str(row).strip().split())
-        if cleaned:
-            discovered_names.add(cleaned)
-
-    for row in db.scalars(select(PlayerPartnerSessionStatsRecord.partner_name)).all():
-        cleaned = " ".join(str(row).strip().split())
-        if cleaned:
-            discovered_names.add(cleaned)
-
-    for row in db.scalars(select(PlayerStatsSummaryRecord.player_name)).all():
-        cleaned = " ".join(str(row).strip().split())
-        if cleaned:
-            discovered_names.add(cleaned)
-
-    if not active_players and not discovered_names:
+    if not active_players and not discovered_names and not workspace_id:
         discovered_names.update(DEFAULT_PLAYER_DIRECTORY)
 
     changed = False
     for name in sorted(discovered_names):
-        normalized = _normalize_player_name(name)
+        normalized = _workspace_player_key(workspace_id, _normalize_player_name(name))
         if normalized in existing_full_names or normalized in existing_short_names or normalized in existing_aliases:
             continue
-        player, created = _ensure_legacy_player_record(db, name, name)
+        player, created = _ensure_legacy_player_record(db, workspace_id, name, name)
         if not player:
             continue
         existing_full_names.add(player.normalized_full_name)
@@ -579,7 +710,7 @@ def _ensure_player_registry(db):
     if changed:
         db.flush()
 
-    for player in db.scalars(select(PlayerRecord)).all():
+    for player in db.scalars(select(PlayerRecord).where(PlayerRecord.workspace_id == workspace_id)).all():
         next_aliases = [
             alias
             for alias in dict.fromkeys(
@@ -594,22 +725,38 @@ def _ensure_player_registry(db):
             existing_aliases.update(_normalize_player_name(alias) for alias in next_aliases)
 
 
-def _find_player_by_name(db, name: str) -> PlayerRecord | None:
+def _find_player_by_name(db, name: str, workspace_id: str | None = None, *, include_deleted: bool = False) -> PlayerRecord | None:
     normalized = _normalize_player_name(name)
     if not normalized:
         return None
+    scoped_normalized = name if workspace_id and name.startswith(f"{workspace_id}::") else _workspace_player_key(workspace_id, normalized)
+    query = select(PlayerRecord)
+    if not include_deleted:
+        query = query.where(PlayerRecord.is_deleted.is_(False))
+    if workspace_id:
+        query = query.where(PlayerRecord.workspace_id == workspace_id)
     player = db.scalar(
-        select(PlayerRecord).where(PlayerRecord.normalized_short_name == normalized, PlayerRecord.is_deleted.is_(False))
+        query.where(
+            or_(
+                PlayerRecord.lookup_short_name == normalized,
+                PlayerRecord.normalized_short_name == scoped_normalized,
+            )
+        )
     )
     if player:
         return player
     player = db.scalar(
-        select(PlayerRecord).where(PlayerRecord.normalized_full_name == normalized, PlayerRecord.is_deleted.is_(False))
+        query.where(
+            or_(
+                PlayerRecord.lookup_full_name == normalized,
+                PlayerRecord.normalized_full_name == scoped_normalized,
+            )
+        )
     )
     if player:
         return player
 
-    for candidate in db.scalars(select(PlayerRecord).where(PlayerRecord.is_deleted.is_(False))).all():
+    for candidate in db.scalars(query).all():
         aliases = {_normalize_player_name(alias) for alias in (candidate.aliases or []) if alias}
         if normalized in aliases:
             return candidate
@@ -617,7 +764,12 @@ def _find_player_by_name(db, name: str) -> PlayerRecord | None:
 
 
 def _player_uses_name(player: PlayerRecord, normalized_name: str) -> bool:
-    if player.normalized_full_name == normalized_name or player.normalized_short_name == normalized_name:
+    if (
+        player.lookup_full_name == normalized_name
+        or player.lookup_short_name == normalized_name
+        or player.normalized_full_name == normalized_name
+        or player.normalized_short_name == normalized_name
+    ):
         return True
     return normalized_name in {
         _normalize_player_name(alias)
@@ -628,12 +780,13 @@ def _player_uses_name(player: PlayerRecord, normalized_name: str) -> bool:
 
 def _find_name_conflict(
     db,
+    workspace_id: str,
     normalized_name: str,
     exclude_player_id: str | None = None,
     *,
     include_deleted: bool = False,
 ) -> PlayerRecord | None:
-    for player in db.scalars(select(PlayerRecord)).all():
+    for player in db.scalars(select(PlayerRecord).where(PlayerRecord.workspace_id == workspace_id)).all():
         if exclude_player_id and player.player_id == exclude_player_id:
             continue
         if player.is_deleted and not include_deleted:
@@ -643,9 +796,14 @@ def _find_name_conflict(
     return None
 
 
-def _find_soft_deleted_player_for_restore(db, normalized_full_name: str, normalized_short_name: str) -> PlayerRecord | None:
+def _find_soft_deleted_player_for_restore(db, workspace_id: str, normalized_full_name: str, normalized_short_name: str) -> PlayerRecord | None:
     matches = []
-    for player in db.scalars(select(PlayerRecord).where(PlayerRecord.is_deleted.is_(True))).all():
+    for player in db.scalars(
+        select(PlayerRecord).where(
+            PlayerRecord.workspace_id == workspace_id,
+            PlayerRecord.is_deleted.is_(True),
+        )
+    ).all():
         if _player_uses_name(player, normalized_full_name) or _player_uses_name(player, normalized_short_name):
             matches.append(player)
 
@@ -676,8 +834,10 @@ def _restore_deleted_player(db, player: PlayerRecord, full_name: str, short_name
 
     player.full_name = full_name
     player.short_name = short_name
-    player.normalized_full_name = normalized_full_name
-    player.normalized_short_name = normalized_short_name
+    player.lookup_full_name = normalized_full_name
+    player.lookup_short_name = normalized_short_name
+    player.normalized_full_name = _workspace_player_key(player.workspace_id, normalized_full_name)
+    player.normalized_short_name = _workspace_player_key(player.workspace_id, normalized_short_name)
     player.aliases = list(dict.fromkeys(alias_pool))
     player.is_deleted = False
     player.deleted_at = None
@@ -698,29 +858,42 @@ def _player_related_names(player: PlayerRecord) -> list[str]:
 
 def _delete_player_history(db, player: PlayerRecord):
     related_names = _player_related_names(player)
+    related_keys = {_workspace_stats_player_key(player.workspace_id, value) for value in related_names}
+    related_keys.update({player.normalized_full_name, player.normalized_short_name})
+    related_keys.discard("")
     if not related_names:
         return
 
     for row in db.scalars(
-        select(PlayerSessionStatsRecord).where(PlayerSessionStatsRecord.player_name.in_(related_names))
-    ).all():
-        db.delete(row)
-
-    for row in db.scalars(
-        select(PlayerPartnerSessionStatsRecord).where(
-            (PlayerPartnerSessionStatsRecord.player_name.in_(related_names)) |
-            (PlayerPartnerSessionStatsRecord.partner_name.in_(related_names))
+        select(PlayerSessionStatsRecord).where(
+            PlayerSessionStatsRecord.workspace_id == (player.workspace_id or ""),
+            PlayerSessionStatsRecord.player_name.in_(related_keys),
         )
     ).all():
         db.delete(row)
 
     for row in db.scalars(
-        select(PlayerStatsSummaryRecord).where(PlayerStatsSummaryRecord.player_name.in_(related_names))
+        select(PlayerPartnerSessionStatsRecord).where(
+            PlayerPartnerSessionStatsRecord.workspace_id == (player.workspace_id or ""),
+            (
+                PlayerPartnerSessionStatsRecord.player_name.in_(related_keys)
+            ) | (
+                PlayerPartnerSessionStatsRecord.partner_name.in_(related_keys)
+            )
+        )
+    ).all():
+        db.delete(row)
+
+    for row in db.scalars(
+        select(PlayerStatsSummaryRecord).where(
+            PlayerStatsSummaryRecord.workspace_id == (player.workspace_id or ""),
+            PlayerStatsSummaryRecord.player_name.in_(related_keys),
+        )
     ).all():
         db.delete(row)
 
     db.flush()
-    _rebuild_player_stats_summary(db)
+    _rebuild_player_stats_summary(db, player.workspace_id or "")
 
 
 def _upgrade_session_payload(payload: dict) -> dict:
@@ -1044,11 +1217,15 @@ def _delete_completed_session_history(db, session_id: str):
         db.delete(summary)
 
 
-def _rebuild_player_stats_summary(db):
+def _rebuild_player_stats_summary(db, workspace_id: str):
     session_rows = db.scalars(
-        select(PlayerSessionStatsRecord).order_by(PlayerSessionStatsRecord.completed_at.desc())
+        select(PlayerSessionStatsRecord)
+        .where(PlayerSessionStatsRecord.workspace_id == workspace_id)
+        .order_by(PlayerSessionStatsRecord.completed_at.desc())
     ).all()
-    partner_rows = db.scalars(select(PlayerPartnerSessionStatsRecord)).all()
+    partner_rows = db.scalars(
+        select(PlayerPartnerSessionStatsRecord).where(PlayerPartnerSessionStatsRecord.workspace_id == workspace_id)
+    ).all()
 
     partner_totals = defaultdict(lambda: {"wins": 0, "matches": 0})
     for row in partner_rows:
@@ -1097,11 +1274,12 @@ def _rebuild_player_stats_summary(db):
     if player_names:
         db.execute(
             delete(PlayerStatsSummaryRecord).where(
+                PlayerStatsSummaryRecord.workspace_id == workspace_id,
                 PlayerStatsSummaryRecord.player_name.not_in(player_names)
             )
         )
     else:
-        db.execute(delete(PlayerStatsSummaryRecord))
+        db.execute(delete(PlayerStatsSummaryRecord).where(PlayerStatsSummaryRecord.workspace_id == workspace_id))
         db.flush()
         return
 
@@ -1110,6 +1288,7 @@ def _rebuild_player_stats_summary(db):
         summary_rows.append(
             {
                 "player_name": player_name,
+                "workspace_id": workspace_id,
                 "sessions_played": values["sessions_played"],
                 "matches_played": values["matches_played"],
                 "wins": values["wins"],
@@ -1146,7 +1325,7 @@ def _rebuild_player_stats_summary(db):
         dialect_insert = None
 
     if dialect_insert is None:
-        db.execute(delete(PlayerStatsSummaryRecord))
+        db.execute(delete(PlayerStatsSummaryRecord).where(PlayerStatsSummaryRecord.workspace_id == workspace_id))
         db.flush()
         for row in summary_rows:
             db.add(PlayerStatsSummaryRecord(**row))
@@ -1167,13 +1346,14 @@ def _rebuild_player_stats_summary(db):
 
 
 def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict):
+    workspace_id = record.workspace_id or ""
     completion_state = _get_session_completion_state(db, record, payload)
     existing_summary = db.get(CompletedSessionStatsRecord, record.session_id)
 
     if not completion_state["completed"]:
         if existing_summary:
             _delete_session_analytics(db, record.session_id)
-            _rebuild_player_stats_summary(db)
+            _rebuild_player_stats_summary(db, workspace_id)
         return
 
     if existing_summary and existing_summary.processed_version == record.version:
@@ -1190,10 +1370,18 @@ def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict
         score = match["score"]
         point_delta = score["teamA"] - score["teamB"]
         stage_prefix = "league" if stage == "league" else "knockout"
+        team_a_keys = []
+        team_b_keys = []
 
         for player in court["team_a"] + court["team_b"]:
+            player_record = _find_player_by_name(db, player, workspace_id) if workspace_id else _find_player_by_name(db, player)
+            player_key = (
+                player_record.normalized_full_name
+                if player_record
+                else _workspace_stats_player_key(workspace_id, player)
+            )
             player_totals.setdefault(
-                player,
+                player_key,
                 {
                     "matches_played": 0,
                     "wins": 0,
@@ -1216,23 +1404,27 @@ def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict
                     "championships": 0,
                 },
             )
+            if player in court["team_a"]:
+                team_a_keys.append(player_key)
+            else:
+                team_b_keys.append(player_key)
 
-        for player in court["team_a"]:
-            player_totals[player]["matches_played"] += 1
-            player_totals[player][f"{stage_prefix}_matches_played"] += 1
-            player_totals[player]["point_difference"] += point_delta
-            player_totals[player][f"{stage_prefix}_point_difference"] += point_delta
-        for player in court["team_b"]:
-            player_totals[player]["matches_played"] += 1
-            player_totals[player][f"{stage_prefix}_matches_played"] += 1
-            player_totals[player]["point_difference"] -= point_delta
-            player_totals[player][f"{stage_prefix}_point_difference"] -= point_delta
+        for player_key in team_a_keys:
+            player_totals[player_key]["matches_played"] += 1
+            player_totals[player_key][f"{stage_prefix}_matches_played"] += 1
+            player_totals[player_key]["point_difference"] += point_delta
+            player_totals[player_key][f"{stage_prefix}_point_difference"] += point_delta
+        for player_key in team_b_keys:
+            player_totals[player_key]["matches_played"] += 1
+            player_totals[player_key][f"{stage_prefix}_matches_played"] += 1
+            player_totals[player_key]["point_difference"] -= point_delta
+            player_totals[player_key][f"{stage_prefix}_point_difference"] -= point_delta
 
-        for team in (court["team_a"], court["team_b"]):
+        for team in (team_a_keys, team_b_keys):
             if len(team) == 2:
                 for player, partner, delta_sign in (
-                    (team[0], team[1], 1 if team is court["team_a"] else -1),
-                    (team[1], team[0], 1 if team is court["team_a"] else -1),
+                    (team[0], team[1], 1 if team is team_a_keys else -1),
+                    (team[1], team[0], 1 if team is team_a_keys else -1),
                 ):
                     partner_totals.setdefault(
                         (player, partner),
@@ -1243,27 +1435,28 @@ def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict
 
         winner = _get_match_winner(score, court)
         if not winner:
-            for player in court["team_a"] + court["team_b"]:
-                player_totals[player]["draws"] += 1
-                player_totals[player][f"{stage_prefix}_draws"] += 1
-            for team in (court["team_a"], court["team_b"]):
+            for player_key in team_a_keys + team_b_keys:
+                player_totals[player_key]["draws"] += 1
+                player_totals[player_key][f"{stage_prefix}_draws"] += 1
+            for team in (team_a_keys, team_b_keys):
                 if len(team) == 2:
                     for player, partner in ((team[0], team[1]), (team[1], team[0])):
                         partner_totals[(player, partner)]["draws"] += 1
             continue
 
-        losers = court["team_b"] if winner == court["team_a"] else court["team_a"]
-        for player in winner:
-            player_totals[player]["wins"] += 1
-            player_totals[player]["points"] += 2
-            player_totals[player][f"{stage_prefix}_wins"] += 1
-            player_totals[player][f"{stage_prefix}_points"] += 2
-        for player in losers:
-            player_totals[player]["losses"] += 1
-            player_totals[player][f"{stage_prefix}_losses"] += 1
+        winner_keys = team_a_keys if winner == court["team_a"] else team_b_keys
+        losers = team_b_keys if winner == court["team_a"] else team_a_keys
+        for player_key in winner_keys:
+            player_totals[player_key]["wins"] += 1
+            player_totals[player_key]["points"] += 2
+            player_totals[player_key][f"{stage_prefix}_wins"] += 1
+            player_totals[player_key][f"{stage_prefix}_points"] += 2
+        for player_key in losers:
+            player_totals[player_key]["losses"] += 1
+            player_totals[player_key][f"{stage_prefix}_losses"] += 1
 
-        if len(winner) == 2:
-            for player, partner in ((winner[0], winner[1]), (winner[1], winner[0])):
+        if len(winner_keys) == 2:
+            for player, partner in ((winner_keys[0], winner_keys[1]), (winner_keys[1], winner_keys[0])):
                 partner_totals[(player, partner)]["wins"] += 1
                 partner_totals[(player, partner)]["points"] += 2
         if len(losers) == 2:
@@ -1287,7 +1480,14 @@ def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict
         champion_pair = " & ".join(champion) if champion else None
         if champion:
             for player in champion:
-                player_totals[player]["championships"] += 1
+                player_record = _find_player_by_name(db, player, workspace_id) if workspace_id else _find_player_by_name(db, player)
+                player_key = (
+                    player_record.normalized_full_name
+                    if player_record
+                    else _workspace_stats_player_key(workspace_id, player)
+                )
+                if player_key in player_totals:
+                    player_totals[player_key]["championships"] += 1
 
     if not champion_pair:
         pair_standings = _build_pair_standings(league_rounds, league_scores)
@@ -1299,6 +1499,7 @@ def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict
     db.add(
         CompletedSessionStatsRecord(
             session_id=record.session_id,
+            workspace_id=workspace_id,
             session_name=record.name,
             draw_type=draw_type,
             total_players=len(player_totals),
@@ -1314,6 +1515,7 @@ def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict
         db.add(
             PlayerSessionStatsRecord(
                 session_id=record.session_id,
+                workspace_id=workspace_id,
                 player_name=player_name,
                 session_name=record.name,
                 draw_type=draw_type,
@@ -1326,6 +1528,7 @@ def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict
         db.add(
             PlayerPartnerSessionStatsRecord(
                 session_id=record.session_id,
+                workspace_id=workspace_id,
                 player_name=player_name,
                 partner_name=partner_name,
                 **totals,
@@ -1333,11 +1536,15 @@ def _sync_completed_session_stats(db, record: SharedSessionRecord, payload: dict
         )
 
     db.flush()
-    _rebuild_player_stats_summary(db)
+    _rebuild_player_stats_summary(db, workspace_id)
 
 
-def _ensure_completed_session_stats(db):
-    records = db.scalars(select(SharedSessionRecord).order_by(SharedSessionRecord.updated_at.desc())).all()
+def _ensure_completed_session_stats(db, workspace_id: str):
+    records = db.scalars(
+        select(SharedSessionRecord)
+        .where(SharedSessionRecord.workspace_id == workspace_id)
+        .order_by(SharedSessionRecord.updated_at.desc())
+    ).all()
     changed = False
     for record in records:
         payload = _upgrade_session_payload(deepcopy(record.data))
@@ -1350,19 +1557,37 @@ def _ensure_completed_session_stats(db):
         if needs_sync:
             _sync_completed_session_stats(db, record, payload)
             changed = True
-    has_summary_rows = db.scalar(select(PlayerStatsSummaryRecord.player_name).limit(1))
-    has_session_rows = db.scalar(select(PlayerSessionStatsRecord.player_name).limit(1))
+    has_summary_rows = db.scalar(
+        select(PlayerStatsSummaryRecord.player_name)
+        .where(PlayerStatsSummaryRecord.workspace_id == workspace_id)
+        .limit(1)
+    )
+    has_session_rows = db.scalar(
+        select(PlayerSessionStatsRecord.player_name)
+        .where(PlayerSessionStatsRecord.workspace_id == workspace_id)
+        .limit(1)
+    )
     stale_summary = db.scalar(
-        select(PlayerStatsSummaryRecord.player_name).where(PlayerStatsSummaryRecord.sessions_played == 0).limit(1)
+        select(PlayerStatsSummaryRecord.player_name)
+        .where(
+            PlayerStatsSummaryRecord.workspace_id == workspace_id,
+            PlayerStatsSummaryRecord.sessions_played == 0,
+        )
+        .limit(1)
     )
     if (not has_summary_rows and has_session_rows) or (stale_summary and has_session_rows):
-        _rebuild_player_stats_summary(db)
+        _rebuild_player_stats_summary(db, workspace_id)
         changed = True
     if changed:
         db.flush()
 
 
-def _to_completed_session_stats_response(row: CompletedSessionStatsRecord) -> CompletedSessionStatsResponse:
+def _to_completed_session_stats_response(row: CompletedSessionStatsRecord, db=None) -> CompletedSessionStatsResponse:
+    top_player = row.top_player
+    if top_player and row.workspace_id and db is not None:
+        player = _find_player_by_name(db, top_player, row.workspace_id)
+        if player:
+            top_player = player.full_name
     return CompletedSessionStatsResponse(
         session_id=row.session_id,
         session_name=row.session_name,
@@ -1371,13 +1596,13 @@ def _to_completed_session_stats_response(row: CompletedSessionStatsRecord) -> Co
         total_players=row.total_players,
         total_matches=row.total_matches,
         champion_pair=row.champion_pair,
-        top_player=row.top_player,
+        top_player=top_player,
     )
 
 
 def _to_player_stats_summary_response(db, row: PlayerStatsSummaryRecord) -> PlayerStatsSummaryResponse:
     win_rate = round((row.wins / row.matches_played) * 100, 1) if row.matches_played else 0.0
-    player = _find_player_by_name(db, row.player_name)
+    player = _find_player_by_name(db, row.player_name, row.workspace_id, include_deleted=True)
     return PlayerStatsSummaryResponse(
         player_id=player.player_id if player else None,
         full_name=player.full_name if player else row.player_name,
@@ -1550,7 +1775,7 @@ def _is_valid_edit_token(payload: dict, edit_token: str | None) -> bool:
     if edit_token is None:
         return False
 
-    return edit_token == payload.get("edit_token") or edit_token == ADMIN_RECOVERY_TOKEN
+    return edit_token == payload.get("edit_token")
 
 
 def _require_edit_access(payload: dict, edit_token: str | None):
@@ -1913,52 +2138,125 @@ def api_generate(req: RosterRequest):
     )
 
 
+@app.get("/api/auth/session", response_model=AuthSessionResponse)
+def get_auth_session(request: Request):
+    with get_db_session() as db:
+        user = get_current_user(request, db, required=False)
+        return _serialize_auth_session(db, user, request=request)
+
+
+@app.post("/api/auth/google", response_model=AuthSessionResponse)
+def login_with_google(req: AuthGoogleLoginRequest):
+    google_profile = verify_google_token(req.credential)
+    with get_db_session() as db:
+        user = get_or_create_google_user(db, google_profile)
+        auth_token, _ = create_auth_session(db, user)
+        db.flush()
+        return _serialize_auth_session(db, user, auth_token=auth_token)
+
+
+@app.post("/api/auth/signup", response_model=AuthSessionResponse, status_code=201)
+def signup_with_password(req: AuthPasswordSignupRequest):
+    with get_db_session() as db:
+        user = create_password_user(
+            db,
+            email=req.email,
+            password=req.password,
+            display_name=req.display_name,
+        )
+        auth_token, _ = create_auth_session(db, user)
+        db.flush()
+        return _serialize_auth_session(db, user, auth_token=auth_token)
+
+
+@app.post("/api/auth/login", response_model=AuthSessionResponse)
+def login_with_password(req: AuthPasswordLoginRequest):
+    with get_db_session() as db:
+        user = authenticate_password_user(db, email=req.email, password=req.password)
+        auth_token, _ = create_auth_session(db, user)
+        db.flush()
+        return _serialize_auth_session(db, user, auth_token=auth_token)
+
+
+@app.post("/api/auth/logout", response_model=AuthSessionResponse)
+def logout_auth_session(request: Request):
+    with get_db_session() as db:
+        revoke_auth_session(request, db)
+        return _serialize_auth_session(db, None)
+
+
+@app.get("/api/workspaces", response_model=list[WorkspaceResponse])
+def list_workspaces(request: Request):
+    with get_db_session() as db:
+        user = get_current_user(request, db, required=True)
+        ensure_default_workspace(db, user)
+        workspaces = []
+        for membership in db.scalars(
+            select(WorkspaceMembershipRecord).where(WorkspaceMembershipRecord.user_id == user.user_id)
+        ).all():
+            workspace = db.get(WorkspaceRecord, membership.workspace_id)
+            if workspace:
+                workspaces.append(WorkspaceResponse(**serialize_workspace(db, workspace, user_id=user.user_id)))
+        return workspaces
+
+
+@app.post("/api/workspaces/active", response_model=AuthSessionResponse)
+def select_active_workspace(req: WorkspaceSelectRequest, request: Request):
+    with get_db_session() as db:
+        user = get_current_user(request, db, required=True)
+        auth_session = get_current_auth_session(request, db)
+        if not auth_session:
+            raise HTTPException(status_code=401, detail="Login required")
+        switch_active_workspace(db, user, auth_session, req.workspace_id)
+        db.flush()
+        return _serialize_auth_session(db, user, request=request)
+
+
 @app.post("/api/rosters/revalidate", response_model=RosterResponse)
 def api_revalidate_roster(req: RosterRevalidateRequest):
     return _normalize_existing_roster(req, req.roster)
 
 
 @app.post("/api/sessions", response_model=SharedSessionResponse)
-def create_shared_session(req: SharedSessionCreateRequest):
-    if req.admin_token != ADMIN_RECOVERY_TOKEN:
-        raise HTTPException(status_code=403, detail="Organizer token required to start a session")
-
-    inferred_players = [player.short_name for player in req.selected_players]
-    if not inferred_players:
-        seen_players = set()
-        for round_data in req.roster.rounds:
-            for court in round_data.courts:
-                seen_players.update(court.team_a)
-                seen_players.update(court.team_b)
-            seen_players.update(round_data.resting)
-        inferred_players = sorted(seen_players)
-
-    normalized_roster = _normalize_existing_roster(
-        RosterRequest(
-            players=inferred_players,
-            fixed_pairs=req.fixed_pairs,
-            num_courts=len(req.roster.court_numbers),
-            court_numbers=req.roster.court_numbers,
-            rounds=len(req.roster.rounds),
-            limits=req.limits,
-            pair_games=req.pair_games,
-            pair_start_round=req.pair_start_round,
-            max_consecutive_rest=req.max_consecutive_rest,
-        ),
-        req.roster,
-    )
-
-    payload = {
-        "name": req.name or f"session-{secrets.token_hex(2)}",
-        "edit_token": secrets.token_urlsafe(12),
-        "roster": normalized_roster.model_dump(),
-        "draw_config": req.draw_config.model_dump(),
-        "player_directory": [player.model_dump() for player in req.selected_players],
-        "fixed_pair_player_ids": req.fixed_pair_player_ids,
-    }
-
+def create_shared_session(req: SharedSessionCreateRequest, request: Request):
     with get_db_session() as db:
-        _ensure_player_registry(db)
+        organizer_user, workspace, _ = require_organizer(request, db)
+
+        inferred_players = [player.short_name for player in req.selected_players]
+        if not inferred_players:
+            seen_players = set()
+            for round_data in req.roster.rounds:
+                for court in round_data.courts:
+                    seen_players.update(court.team_a)
+                    seen_players.update(court.team_b)
+                seen_players.update(round_data.resting)
+            inferred_players = sorted(seen_players)
+
+        normalized_roster = _normalize_existing_roster(
+            RosterRequest(
+                players=inferred_players,
+                fixed_pairs=req.fixed_pairs,
+                num_courts=len(req.roster.court_numbers),
+                court_numbers=req.roster.court_numbers,
+                rounds=len(req.roster.rounds),
+                limits=req.limits,
+                pair_games=req.pair_games,
+                pair_start_round=req.pair_start_round,
+                max_consecutive_rest=req.max_consecutive_rest,
+            ),
+            req.roster,
+        )
+
+        payload = {
+            "name": req.name or f"session-{secrets.token_hex(2)}",
+            "edit_token": secrets.token_urlsafe(12),
+            "roster": normalized_roster.model_dump(),
+            "draw_config": req.draw_config.model_dump(),
+            "player_directory": [player.model_dump() for player in req.selected_players],
+            "fixed_pair_player_ids": req.fixed_pair_player_ids,
+        }
+
+        _ensure_player_registry(db, workspace.workspace_id)
         while True:
             session_id = _generate_session_id()
             existing = db.scalar(
@@ -1969,12 +2267,14 @@ def create_shared_session(req: SharedSessionCreateRequest):
 
         record = SharedSessionRecord(
             session_id=session_id,
+            workspace_id=workspace.workspace_id,
             name=payload["name"],
             data=payload,
             version=1,
         )
         db.add(record)
         db.flush()
+        ensure_session_owner(db, session_id, organizer_user.user_id)
         db.refresh(record)
         response = _serialize_session(record, edit_token=payload["edit_token"], db=db)
         _invalidate_session_views(session_id, include_analytics=False)
@@ -1993,83 +2293,107 @@ def get_shared_session(session_id: str, edit_token: str | None = None):
 
 
 @app.get("/api/sessions", response_model=list[SharedSessionSummary])
-def list_shared_sessions():
+def list_shared_sessions(request: Request):
     def build_response():
         with get_db_session() as db:
+            _, workspace, _ = require_organizer(request, db)
             records = db.scalars(
-                select(SharedSessionRecord).order_by(SharedSessionRecord.updated_at.desc())
+                select(SharedSessionRecord)
+                .where(SharedSessionRecord.workspace_id == workspace.workspace_id)
+                .order_by(SharedSessionRecord.updated_at.desc())
             ).all()
             return [_serialize_session_summary(record, db=db) for record in records]
 
     return _cache_get_or_set(
         "sessions",
-        ["all"],
+        [hashlib.sha256((request.headers.get("Authorization") or "anon").encode("utf-8")).hexdigest()[:12]],
         _cache_ttl("CACHE_TTL_SESSIONS", 20),
         build_response,
     )
 
 
 @app.get("/api/players", response_model=list[PlayerResponse])
-def list_players():
+def list_players(request: Request):
     def build_response():
         with get_db_session() as db:
-            _ensure_player_registry(db)
+            _, workspace, _ = require_organizer(request, db)
+            _ensure_player_registry(db, workspace.workspace_id)
             rows = db.scalars(
                 select(PlayerRecord)
-                .where(PlayerRecord.is_deleted.is_(False))
+                .where(
+                    PlayerRecord.workspace_id == workspace.workspace_id,
+                    PlayerRecord.is_deleted.is_(False),
+                )
                 .order_by(PlayerRecord.full_name.asc())
             ).all()
             return [_serialize_player(row) for row in rows]
 
     return _cache_get_or_set(
         "players",
-        ["all"],
+        [hashlib.sha256((request.headers.get("Authorization") or "anon").encode("utf-8")).hexdigest()[:12]],
         _cache_ttl("CACHE_TTL_PLAYERS", 300),
         build_response,
     )
 
 
 @app.post("/api/players", response_model=PlayerResponse, status_code=201)
-def create_player(req: PlayerCreateRequest):
+def create_player(req: PlayerCreateRequest, request: Request):
     with get_db_session() as db:
-        _ensure_player_registry(db)
+        _, workspace, _ = require_organizer(request, db)
+        _ensure_player_registry(db, workspace.workspace_id)
         normalized_full_name = _normalize_player_name(req.full_name)
         normalized_short_name = _normalize_player_name(req.short_name)
 
-        existing_full = _find_name_conflict(db, normalized_full_name)
+        existing_full = _find_name_conflict(db, workspace.workspace_id, normalized_full_name)
         if existing_full:
             raise HTTPException(status_code=409, detail="A player with this full name already exists")
 
-        existing_short = _find_name_conflict(db, normalized_short_name)
+        existing_short = _find_name_conflict(db, workspace.workspace_id, normalized_short_name)
         if existing_short:
             raise HTTPException(status_code=409, detail="A player with this short name already exists")
 
-        soft_deleted_player = _find_soft_deleted_player_for_restore(db, normalized_full_name, normalized_short_name)
+        soft_deleted_player = _find_soft_deleted_player_for_restore(
+            db,
+            workspace.workspace_id,
+            normalized_full_name,
+            normalized_short_name,
+        )
         if soft_deleted_player:
             player = _restore_deleted_player(db, soft_deleted_player, req.full_name, req.short_name)
         else:
-            player = _create_player_record(db, req.full_name, req.short_name, source="manual")
+            player = _create_player_record(db, workspace.workspace_id, req.full_name, req.short_name, source="manual")
         response = _serialize_player(player)
         _invalidate_player_views()
         return response
 
 
 @app.patch("/api/players/{player_id}", response_model=PlayerResponse)
-def update_player(player_id: str, req: PlayerUpdateRequest):
+def update_player(player_id: str, req: PlayerUpdateRequest, request: Request):
     with get_db_session() as db:
-        _ensure_player_registry(db)
+        _, workspace, _ = require_organizer(request, db)
+        _ensure_player_registry(db, workspace.workspace_id)
         player = db.get(PlayerRecord, player_id)
-        if not player or player.is_deleted:
+        if not player or player.is_deleted or player.workspace_id != workspace.workspace_id:
             raise HTTPException(status_code=404, detail="Player not found")
 
         normalized_full_name = _normalize_player_name(req.full_name)
         normalized_short_name = _normalize_player_name(req.short_name)
 
-        existing_full = _find_name_conflict(db, normalized_full_name, exclude_player_id=player_id)
+        existing_full = _find_name_conflict(
+            db,
+            workspace.workspace_id,
+            normalized_full_name,
+            exclude_player_id=player_id,
+        )
         if existing_full:
             raise HTTPException(status_code=409, detail="A player with this full name already exists")
 
-        existing_short = _find_name_conflict(db, normalized_short_name, exclude_player_id=player_id)
+        existing_short = _find_name_conflict(
+            db,
+            workspace.workspace_id,
+            normalized_short_name,
+            exclude_player_id=player_id,
+        )
         if existing_short:
             raise HTTPException(status_code=409, detail="A player with this short name already exists")
 
@@ -2083,8 +2407,10 @@ def update_player(player_id: str, req: PlayerUpdateRequest):
 
         player.full_name = req.full_name
         player.short_name = req.short_name
-        player.normalized_full_name = normalized_full_name
-        player.normalized_short_name = normalized_short_name
+        player.lookup_full_name = normalized_full_name
+        player.lookup_short_name = normalized_short_name
+        player.normalized_full_name = _workspace_player_key(workspace.workspace_id, normalized_full_name)
+        player.normalized_short_name = _workspace_player_key(workspace.workspace_id, normalized_short_name)
         player.aliases = list(dict.fromkeys(alias_pool))
         db.add(player)
         db.flush()
@@ -2095,14 +2421,13 @@ def update_player(player_id: str, req: PlayerUpdateRequest):
 
 
 @app.post("/api/players/{player_id}/delete", status_code=204)
-def delete_player(player_id: str, req: PlayerDeleteRequest):
+def delete_player(player_id: str, req: PlayerDeleteRequest, request: Request):
     with get_db_session() as db:
-        _ensure_player_registry(db)
+        _, workspace, _ = require_organizer(request, db)
+        _ensure_player_registry(db, workspace.workspace_id)
         player = db.get(PlayerRecord, player_id)
-        if not player or player.is_deleted:
+        if not player or player.is_deleted or player.workspace_id != workspace.workspace_id:
             raise HTTPException(status_code=404, detail="Player not found")
-        if req.admin_token != ADMIN_RECOVERY_TOKEN:
-            raise HTTPException(status_code=403, detail="Invalid admin token")
 
         if req.delete_history:
             _delete_player_history(db, player)
@@ -2116,32 +2441,36 @@ def delete_player(player_id: str, req: PlayerDeleteRequest):
 
 
 @app.get("/api/history/sessions", response_model=list[CompletedSessionStatsResponse])
-def list_completed_sessions():
+def list_completed_sessions(request: Request):
     def build_response():
         with get_db_session() as db:
-            _ensure_player_registry(db)
-            _ensure_completed_session_stats(db)
+            _, workspace, _ = require_organizer(request, db)
+            _ensure_completed_session_stats(db, workspace.workspace_id)
             rows = db.scalars(
-                select(CompletedSessionStatsRecord).order_by(CompletedSessionStatsRecord.completed_at.desc())
+                select(CompletedSessionStatsRecord)
+                .where(CompletedSessionStatsRecord.workspace_id == workspace.workspace_id)
+                .order_by(CompletedSessionStatsRecord.completed_at.desc())
             ).all()
-            return [_to_completed_session_stats_response(row) for row in rows]
+            return [_to_completed_session_stats_response(row, db=db) for row in rows]
 
     return _cache_get_or_set(
         "history",
-        ["completed"],
+        [hashlib.sha256((request.headers.get("Authorization") or "anon").encode("utf-8")).hexdigest()[:12]],
         _cache_ttl("CACHE_TTL_HISTORY", 60),
         build_response,
     )
 
 
 @app.get("/api/stats/players", response_model=list[PlayerStatsSummaryResponse])
-def list_player_stats():
+def list_player_stats(request: Request):
     def build_response():
         with get_db_session() as db:
-            _ensure_player_registry(db)
-            _ensure_completed_session_stats(db)
+            _, workspace, _ = require_organizer(request, db)
+            _ensure_completed_session_stats(db, workspace.workspace_id)
             rows = db.scalars(
-                select(PlayerStatsSummaryRecord).order_by(
+                select(PlayerStatsSummaryRecord)
+                .where(PlayerStatsSummaryRecord.workspace_id == workspace.workspace_id)
+                .order_by(
                     PlayerStatsSummaryRecord.championships.desc(),
                     PlayerStatsSummaryRecord.points.desc(),
                     PlayerStatsSummaryRecord.point_difference.desc(),
@@ -2153,25 +2482,33 @@ def list_player_stats():
 
     return _cache_get_or_set(
         "player-stats",
-        ["summary"],
+        ["summary", hashlib.sha256((request.headers.get("Authorization") or "anon").encode("utf-8")).hexdigest()[:12]],
         _cache_ttl("CACHE_TTL_PLAYER_STATS", 60),
         build_response,
     )
 
 
 @app.get("/api/stats/players/{player_name}", response_model=PlayerStatsDetailResponse)
-def get_player_stats(player_name: str):
+def get_player_stats(player_name: str, request: Request):
     def build_response():
         with get_db_session() as db:
-            _ensure_player_registry(db)
-            _ensure_completed_session_stats(db)
-            row = db.get(PlayerStatsSummaryRecord, player_name)
+            _, workspace, _ = require_organizer(request, db)
+            _ensure_completed_session_stats(db, workspace.workspace_id)
+            row = db.scalar(
+                select(PlayerStatsSummaryRecord).where(
+                    PlayerStatsSummaryRecord.workspace_id == workspace.workspace_id,
+                    PlayerStatsSummaryRecord.player_name == player_name,
+                )
+            )
             if not row:
                 raise HTTPException(status_code=404, detail="Player stats not found")
 
             partner_rows = db.scalars(
                 select(PlayerPartnerSessionStatsRecord)
-                .where(PlayerPartnerSessionStatsRecord.player_name == player_name)
+                .where(
+                    PlayerPartnerSessionStatsRecord.workspace_id == workspace.workspace_id,
+                    PlayerPartnerSessionStatsRecord.player_name == player_name,
+                )
             ).all()
 
             partner_totals = defaultdict(lambda: {"wins": 0, "matches": 0})
@@ -2190,7 +2527,7 @@ def get_player_stats(player_name: str):
                         "wins": totals["wins"],
                         "win_rate": round((totals["wins"] / totals["matches"]) * 100, 1) if totals["matches"] else 0.0,
                     }
-                )(_find_player_by_name(db, partner_name))
+                )(_find_player_by_name(db, partner_name, workspace.workspace_id))
                 for partner_name, totals in partner_totals.items()
                 if totals["matches"] > 0
             ]
@@ -2214,7 +2551,7 @@ def get_player_stats(player_name: str):
 
     return _cache_get_or_set(
         "player-stats",
-        ["detail", player_name],
+        ["detail", player_name, hashlib.sha256((request.headers.get("Authorization") or "anon").encode("utf-8")).hexdigest()[:12]],
         _cache_ttl("CACHE_TTL_PLAYER_STATS", 60),
         build_response,
     )
@@ -2241,11 +2578,13 @@ def delete_shared_session(session_id: str, edit_token: str | None = None):
         ).all()
         for score_record in score_records:
             db.delete(score_record)
+        workspace_id = record.workspace_id or ""
         if completion_state["completed"]:
-            _delete_completed_session_history(db, session_id)
+            _delete_session_analytics(db, session_id)
+            _rebuild_player_stats_summary(db, workspace_id)
         else:
             _delete_session_analytics(db, session_id)
-            _rebuild_player_stats_summary(db)
+            _rebuild_player_stats_summary(db, workspace_id)
         db.delete(record)
         _invalidate_session_views(session_id, include_analytics=completion_state["completed"])
     return Response(status_code=204)

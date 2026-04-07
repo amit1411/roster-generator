@@ -1,6 +1,6 @@
 import PlayersPage from "../components/PlayersPage";
 
-export default function PlayersRoute({ players }) {
+export default function PlayersRoute({ players, canManagePlayers, onRequireOrganizerLogin }) {
   return (
     <PlayersPage
       players={players.directoryPlayers.map((player) => ({
@@ -12,6 +12,8 @@ export default function PlayersRoute({ players }) {
         created_at: player.createdAt,
       }))}
       loading={players.playersLoading}
+      canManagePlayers={canManagePlayers}
+      onRequireOrganizerLogin={onRequireOrganizerLogin}
       directoryError={players.directoryError}
       createLoading={players.createPlayerLoading}
       createError={players.createPlayerError}

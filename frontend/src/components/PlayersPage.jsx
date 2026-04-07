@@ -211,17 +211,6 @@ function DeletePlayerDialog({
         </div>
 
         <div className="mt-5 space-y-4">
-          <label className="block text-sm font-medium text-gray-700">
-            {playersPageCopy.deletePlayer.tokenLabel}
-            <input
-              type="password"
-              value={draft.adminToken}
-              onChange={(event) => setDraft((current) => ({ ...current, adminToken: event.target.value }))}
-              placeholder={playersPageCopy.deletePlayer.tokenPlaceholder}
-              className="mt-2 block w-full rounded-xl border border-gray-300 px-3 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-rose-500"
-            />
-          </label>
-
           <label className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
             <input
               type="checkbox"
@@ -254,7 +243,7 @@ function DeletePlayerDialog({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={loading || !draft.adminToken.trim()}
+            disabled={loading}
             className="inline-flex min-h-11 items-center justify-center rounded-xl bg-rose-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-rose-700 disabled:cursor-not-allowed disabled:bg-gray-200 disabled:text-gray-500"
           >
             {loading ? playersPageCopy.deletePlayer.submitLoading : playersPageCopy.deletePlayer.submit}
@@ -267,6 +256,8 @@ function DeletePlayerDialog({
 
 export default function PlayersPage({
   players,
+  canManagePlayers,
+  onRequireOrganizerLogin,
   loading,
   directoryError,
   createLoading,
@@ -289,7 +280,7 @@ export default function PlayersPage({
   const [editingPlayerId, setEditingPlayerId] = useState(null);
   const [editDraft, setEditDraft] = useState({ fullName: "", shortName: "" });
   const [deletingPlayer, setDeletingPlayer] = useState(null);
-  const [deleteDraft, setDeleteDraft] = useState({ adminToken: "", deleteHistory: false });
+  const [deleteDraft, setDeleteDraft] = useState({ deleteHistory: false });
   const normalizedSearch = searchQuery.trim().toLowerCase();
   const filteredPlayers = players.filter((player) => {
     const haystack = [
@@ -306,6 +297,10 @@ export default function PlayersPage({
   });
 
   function submitCreate() {
+    if (!canManagePlayers) {
+      onRequireOrganizerLogin?.();
+      return;
+    }
     if (!draft.fullName.trim() || !draft.shortName.trim()) return;
     onCreatePlayer({
       full_name: draft.fullName.trim(),
@@ -318,6 +313,10 @@ export default function PlayersPage({
   }
 
   function beginEdit(player) {
+    if (!canManagePlayers) {
+      onRequireOrganizerLogin?.();
+      return;
+    }
     onClearUpdateError?.();
     setEditingPlayerId(player.player_id);
     setEditDraft({
@@ -327,6 +326,10 @@ export default function PlayersPage({
   }
 
   function submitEdit() {
+    if (!canManagePlayers) {
+      onRequireOrganizerLogin?.();
+      return;
+    }
     if (!editingPlayerId || !editDraft.fullName.trim() || !editDraft.shortName.trim()) return;
     onUpdatePlayer(editingPlayerId, {
       full_name: editDraft.fullName.trim(),
@@ -340,14 +343,17 @@ export default function PlayersPage({
   }
 
   function submitDelete() {
-    if (!deletingPlayer || !deleteDraft.adminToken.trim()) return;
+    if (!canManagePlayers) {
+      onRequireOrganizerLogin?.();
+      return;
+    }
+    if (!deletingPlayer) return;
     onDeletePlayer(deletingPlayer.player_id, {
-      admin_token: deleteDraft.adminToken.trim(),
       delete_history: deleteDraft.deleteHistory,
     }).then((deleted) => {
       if (deleted) {
         setDeletingPlayer(null);
-        setDeleteDraft({ adminToken: "", deleteHistory: false });
+        setDeleteDraft({ deleteHistory: false });
       }
     });
   }
@@ -364,6 +370,18 @@ export default function PlayersPage({
 
       <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
         <div className="space-y-6">
+          {!canManagePlayers ? (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              Organizer login is required to manage the player directory.
+              <button
+                type="button"
+                onClick={onRequireOrganizerLogin}
+                className="mt-3 inline-flex min-h-10 items-center justify-center rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+              >
+                Login as Organizer
+              </button>
+            </div>
+          ) : null}
           <PlayerEditor
             title={playersPageCopy.addPlayer.eyebrow}
             submitLabel={playersPageCopy.addPlayer.submit}
@@ -449,9 +467,13 @@ export default function PlayersPage({
                       <button
                         type="button"
                         onClick={() => {
+                          if (!canManagePlayers) {
+                            onRequireOrganizerLogin?.();
+                            return;
+                          }
                           onClearDeleteError?.();
                           setDeletingPlayer(player);
-                          setDeleteDraft({ adminToken: "", deleteHistory: false });
+                          setDeleteDraft({ deleteHistory: false });
                         }}
                         className="inline-flex min-h-10 items-center justify-center rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100"
                       >
@@ -508,7 +530,7 @@ export default function PlayersPage({
           if (deleteLoading) return;
           onClearDeleteError?.();
           setDeletingPlayer(null);
-          setDeleteDraft({ adminToken: "", deleteHistory: false });
+          setDeleteDraft({ deleteHistory: false });
         }}
         onConfirm={submitDelete}
       />

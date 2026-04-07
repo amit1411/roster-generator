@@ -5,3 +5,5 @@ sqlalchemy
 psycopg[binary]
 redis
 python-dotenv
+google-auth
+requests

@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { loginAsOrganizer } from "./helpers/auth";
 import { navigateToSection } from "./helpers/navigation";
 import { createSharedSession, generateRoster } from "./helpers/session";
 
@@ -18,6 +19,7 @@ test("player directory imports names from existing sessions", async ({ page, req
   });
 
   await page.goto("/");
+  await loginAsOrganizer(page);
   await navigateToSection(page, "Players");
 
   const directorySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Registered players" }) });
@@ -37,6 +39,7 @@ test("players can be created, selected from the planner directory, and used to s
   ];
 
   await page.goto("/");
+  await loginAsOrganizer(page);
   await navigateToSection(page, "Players");
 
   for (const player of players) {
@@ -69,10 +72,6 @@ test("players can be created, selected from the planner directory, and used to s
   await expect(page.locator("main")).toContainText("PA1");
 
   await page.getByRole("button", { name: "Start Session" }).click();
-  const organizerDialog = page.locator("div.fixed.inset-0").filter({ hasText: "Enter organizer token to start a session" });
-  await expect(organizerDialog.getByRole("heading", { name: "Enter organizer token to start a session" })).toBeVisible();
-  await organizerDialog.getByLabel("Organizer token").fill("thisismytoken");
-  await organizerDialog.getByRole("button", { name: "Start Session" }).click();
 
   await expect(page.getByText("Scoring Console")).toBeVisible();
   await expect(page.locator("p").filter({ hasText: /^Session \d{4}-\d{2}-\d{2}/ })).toBeVisible();

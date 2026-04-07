@@ -55,12 +55,159 @@ class Base(DeclarativeBase):
     """Base ORM model."""
 
 
+class UserRecord(Base):
+    """Registered application user."""
+
+    __tablename__ = "users"
+
+    user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    primary_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    normalized_email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    display_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class AuthIdentityRecord(Base):
+    """Login identity linked to a user."""
+
+    __tablename__ = "auth_identities"
+
+    identity_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(24), nullable=False)
+    provider_user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    normalized_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class UserRoleRecord(Base):
+    """Granted role for a user."""
+
+    __tablename__ = "user_roles"
+
+    user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    role: Mapped[str] = mapped_column(String(32), primary_key=True)
+    granted_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class WorkspaceRecord(Base):
+    """Organizer-owned namespace for tournament operations."""
+
+    __tablename__ = "workspaces"
+
+    workspace_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_user_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    workspace_type: Mapped[str] = mapped_column(String(24), nullable=False, default="personal")
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    created_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class WorkspaceMembershipRecord(Base):
+    """Membership for a user in a workspace."""
+
+    __tablename__ = "workspace_memberships"
+
+    workspace_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    role: Mapped[str] = mapped_column(String(32), primary_key=True)
+    created_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class UserPlayerLinkRecord(Base):
+    """Future-facing link between an auth user and a canonical player."""
+
+    __tablename__ = "user_player_links"
+
+    user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    player_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class AuthSessionRecord(Base):
+    """Issued bearer session token."""
+
+    __tablename__ = "auth_sessions"
+
+    auth_session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    active_workspace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    expires_at: Mapped[str] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[str] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SessionPermissionRecord(Base):
+    """Permission granted to a user for a session."""
+
+    __tablename__ = "session_permissions"
+
+    session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    permission: Mapped[str] = mapped_column(String(32), primary_key=True)
+    granted_at: Mapped[str] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
 class SharedSessionRecord(Base):
     """Persisted shared scoring session."""
 
     __tablename__ = "shared_sessions"
 
     session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     data: Mapped[dict] = mapped_column(JSON, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -83,8 +230,11 @@ class PlayerRecord(Base):
     __tablename__ = "players"
 
     player_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     full_name: Mapped[str] = mapped_column(String(120), nullable=False)
     short_name: Mapped[str] = mapped_column(String(60), nullable=False)
+    lookup_full_name: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    lookup_short_name: Mapped[str] = mapped_column(String(60), nullable=False, default="")
     normalized_full_name: Mapped[str] = mapped_column(String(120), nullable=False, unique=True)
     normalized_short_name: Mapped[str] = mapped_column(String(60), nullable=False, unique=True)
     aliases: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
@@ -135,6 +285,7 @@ class CompletedSessionStatsRecord(Base):
     __tablename__ = "completed_session_stats"
 
     session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     session_name: Mapped[str] = mapped_column(String(120), nullable=False)
     draw_type: Mapped[str] = mapped_column(String(32), nullable=False)
     total_players: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -151,6 +302,7 @@ class PlayerSessionStatsRecord(Base):
     __tablename__ = "player_session_stats"
 
     session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     player_name: Mapped[str] = mapped_column(String(120), primary_key=True)
     session_name: Mapped[str] = mapped_column(String(120), nullable=False)
     draw_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -182,6 +334,7 @@ class PlayerPartnerSessionStatsRecord(Base):
     __tablename__ = "player_partner_session_stats"
 
     session_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     player_name: Mapped[str] = mapped_column(String(120), primary_key=True)
     partner_name: Mapped[str] = mapped_column(String(120), primary_key=True)
     matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -197,6 +350,7 @@ class PlayerStatsSummaryRecord(Base):
 
     __tablename__ = "player_stats_summary"
 
+    workspace_id: Mapped[str] = mapped_column(String(32), nullable=False, default="")
     player_name: Mapped[str] = mapped_column(String(120), primary_key=True)
     sessions_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     matches_played: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -228,8 +382,66 @@ engine = create_engine(DATABASE_URL, future=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
 
 ANALYTICS_SCHEMA_UPDATES = {
+    "users": [
+        ("primary_email", "VARCHAR(255)", "NOT NULL DEFAULT ''"),
+        ("normalized_email", "VARCHAR(255)", "NOT NULL DEFAULT ''"),
+        ("display_name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
+        ("is_active", "BOOLEAN", "NOT NULL DEFAULT TRUE"),
+        ("created_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+        ("updated_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
+    "auth_identities": [
+        ("user_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("provider", "VARCHAR(24)", "NOT NULL DEFAULT 'password'"),
+        ("provider_user_id", "VARCHAR(255)", "NOT NULL DEFAULT ''"),
+        ("email", "VARCHAR(255)", "NOT NULL DEFAULT ''"),
+        ("normalized_email", "VARCHAR(255)", "NOT NULL DEFAULT ''"),
+        ("password_hash", "VARCHAR(512)", "NULL"),
+        ("created_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+        ("updated_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
+    "user_roles": [
+        ("user_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("role", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("granted_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
+    "workspaces": [
+        ("owner_user_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("workspace_type", "VARCHAR(24)", "NOT NULL DEFAULT 'personal'"),
+        ("name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
+        ("created_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+        ("updated_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
+    "workspace_memberships": [
+        ("workspace_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("user_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("role", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("created_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
+    "user_player_links": [
+        ("user_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("player_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("created_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
+    "auth_sessions": [
+        ("user_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("active_workspace_id", "VARCHAR(32)", "NULL"),
+        ("token_hash", "VARCHAR(64)", "NOT NULL DEFAULT ''"),
+        ("created_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+        ("expires_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+        ("last_seen_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
+    "session_permissions": [
+        ("session_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("user_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("permission", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
+        ("granted_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
+    ],
     "players": [
+        ("workspace_id", "VARCHAR(32)", "NULL"),
         ("short_name", "VARCHAR(60)", "NOT NULL DEFAULT ''"),
+        ("lookup_full_name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
+        ("lookup_short_name", "VARCHAR(60)", "NOT NULL DEFAULT ''"),
         ("normalized_full_name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
         ("normalized_short_name", "VARCHAR(60)", "NOT NULL DEFAULT ''"),
         ("aliases", "JSON", "NULL"),
@@ -239,7 +451,11 @@ ANALYTICS_SCHEMA_UPDATES = {
         ("created_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
         ("updated_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
     ],
+    "shared_sessions": [
+        ("workspace_id", "VARCHAR(32)", "NULL"),
+    ],
     "completed_session_stats": [
+        ("workspace_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
         ("session_name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
         ("draw_type", "VARCHAR(32)", "NOT NULL DEFAULT 'round_robin'"),
         ("total_players", "INTEGER", "NOT NULL DEFAULT 0"),
@@ -250,6 +466,7 @@ ANALYTICS_SCHEMA_UPDATES = {
         ("completed_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
     ],
     "player_session_stats": [
+        ("workspace_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
         ("session_name", "VARCHAR(120)", "NOT NULL DEFAULT ''"),
         ("draw_type", "VARCHAR(32)", "NOT NULL DEFAULT 'round_robin'"),
         ("completed_at", "TIMESTAMP WITH TIME ZONE", "NULL"),
@@ -274,6 +491,7 @@ ANALYTICS_SCHEMA_UPDATES = {
         ("championships", "INTEGER", "NOT NULL DEFAULT 0"),
     ],
     "player_partner_session_stats": [
+        ("workspace_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
         ("matches_played", "INTEGER", "NOT NULL DEFAULT 0"),
         ("wins", "INTEGER", "NOT NULL DEFAULT 0"),
         ("losses", "INTEGER", "NOT NULL DEFAULT 0"),
@@ -282,6 +500,7 @@ ANALYTICS_SCHEMA_UPDATES = {
         ("point_difference", "INTEGER", "NOT NULL DEFAULT 0"),
     ],
     "player_stats_summary": [
+        ("workspace_id", "VARCHAR(32)", "NOT NULL DEFAULT ''"),
         ("sessions_played", "INTEGER", "NOT NULL DEFAULT 0"),
         ("matches_played", "INTEGER", "NOT NULL DEFAULT 0"),
         ("wins", "INTEGER", "NOT NULL DEFAULT 0"),
