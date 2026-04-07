@@ -4,6 +4,42 @@ import RosterTable from "../components/RosterTable";
 import DownloadCSV from "../components/DownloadCSV";
 import { appCopy } from "../content/uiCopy";
 
+function KnockoutDuplicateDialog({ violations, onDismiss }) {
+  if (!violations || violations.length === 0) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/40 p-4">
+      <div className="w-full max-w-2xl rounded-2xl border border-amber-200 bg-white p-5 shadow-xl">
+        <p className="text-sm font-semibold uppercase tracking-wide text-amber-600">
+          {appCopy.planner.duplicateDialog.eyebrow}
+        </p>
+        <h3 className="mt-1 text-lg font-semibold text-gray-900">
+          {appCopy.planner.duplicateDialog.title}
+        </h3>
+        <p className="mt-2 text-sm text-gray-600">
+          {appCopy.planner.duplicateDialog.description}
+        </p>
+        <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+          {violations.map((violation, index) => (
+            <p key={index} className="text-sm text-amber-800">
+              {violation}
+            </p>
+          ))}
+        </div>
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="inline-flex min-h-11 items-center justify-center rounded-lg bg-amber-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-amber-700"
+          >
+            {appCopy.planner.duplicateDialog.dismiss}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PlannerStepCard({ step, title, description, tone = "default", children }) {
   const tones = {
     default: "border-gray-200 bg-white",
@@ -135,7 +171,9 @@ export default function PlannerRoute({ planner, navigateToView, sessionLoading, 
     handleGenerate,
     selectedRosterTarget,
     selectedEditSummary,
+    duplicateKnockoutViolations,
     clearRosterSelection,
+    dismissDuplicateKnockoutViolations,
     rosterEditLoading,
     handleRosterPlayerTap,
     handleRosterTeamTap,
@@ -144,6 +182,11 @@ export default function PlannerRoute({ planner, navigateToView, sessionLoading, 
 
   return (
     <div className="space-y-8">
+      <KnockoutDuplicateDialog
+        violations={duplicateKnockoutViolations}
+        onDismiss={dismissDuplicateKnockoutViolations}
+      />
+
       <section className="rounded-2xl border border-indigo-100 bg-gradient-to-r from-indigo-600 via-indigo-500 to-sky-500 p-5 text-white shadow-sm sm:p-6">
         <div className="flex flex-col gap-5">
           <div>

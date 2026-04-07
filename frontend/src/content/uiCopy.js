@@ -41,6 +41,13 @@ export const appCopy = {
       round: "Select another round or tap the same round again to cancel.",
     },
     regenerateConfirm: "Regenerating will discard all manual roster swaps and rebuild from the current planner inputs. Continue?",
+    duplicateDialog: {
+      eyebrow: "Knockout Schedule Warning",
+      title: "Some fixed pairs are scheduled against the same opponent more than once",
+      description:
+        "The roster is still shown below so you can repair it manually before starting the session.",
+      dismiss: "Review Roster",
+    },
     badges: [
       "Player-first setup",
       "Fast roster generation",

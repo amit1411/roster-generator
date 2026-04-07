@@ -7,6 +7,14 @@ class RosterError(Exception):
     """Raised when roster generation fails due to invalid input."""
 
 
+def _normalize_pair(pair):
+    return tuple(sorted(pair))
+
+
+def _team_label(team):
+    return " & ".join(team)
+
+
 def _select_resting_players(players, num_resting, must_rest, cannot_rest,
                             rest_counts, consec_play, fixed_pairs):
     resting = set(must_rest)
@@ -268,3 +276,130 @@ def generate_roster(players, num_courts, num_rounds, consecutive_limits,
         rounds.append({"round": round_num, "courts": courts, "resting": sorted(resting)})
 
     return rounds, rest_counts, fixed_pair_counts, warnings
+
+
+def generate_fixed_pair_knockout_roster(players, fixed_pairs, num_courts, num_rounds, pair_target):
+    """Generate a strict round-robin league schedule for fixed-pair knockout sessions."""
+    normalized_players = sorted(players)
+    normalized_pairs = [_normalize_pair(pair) for pair in fixed_pairs]
+
+    if not normalized_pairs:
+        raise RosterError("League + knockout scheduling requires at least one fixed pair.")
+
+    pair_players = sorted(player for pair in normalized_pairs for player in pair)
+    if len(pair_players) != len(set(pair_players)):
+        raise RosterError("Each player may appear in at most one fixed pair for league + knockout scheduling.")
+    if pair_players != normalized_players:
+        raise RosterError("League + knockout scheduling requires every selected player to belong to exactly one fixed pair.")
+
+    team_count = len(normalized_pairs)
+    if team_count < 2:
+        raise RosterError("Need at least 2 fixed pairs for league + knockout scheduling.")
+
+    teams_with_bye = list(normalized_pairs)
+    if team_count % 2 == 1:
+        teams_with_bye.append(None)
+
+    base_rounds = len(teams_with_bye) - 1
+    matches_per_round = team_count // 2
+
+    if num_courts != matches_per_round:
+        raise RosterError(
+            f"League + knockout scheduling requires exactly {matches_per_round} court(s) for {team_count} fixed pair(s), "
+            f"but {num_courts} provided."
+        )
+    if num_rounds % base_rounds != 0:
+        raise RosterError(
+            f"League + knockout scheduling requires rounds to be a multiple of {base_rounds} for {team_count} fixed pair(s), "
+            f"but {num_rounds} provided."
+        )
+
+    meetings = num_rounds // base_rounds
+    expected_pair_target = (team_count - 1) * meetings
+    if pair_target != expected_pair_target:
+        raise RosterError(
+            f"League + knockout scheduling requires pair_games={expected_pair_target} for {team_count} fixed pair(s) "
+            f"across {meetings} meeting(s), but {pair_target} provided."
+        )
+
+    cycle_rounds = []
+    rotation = list(teams_with_bye)
+    for _ in range(base_rounds):
+        matches = []
+        resting_team = None
+        for index in range(len(rotation) // 2):
+            first_team = rotation[index]
+            second_team = rotation[-(index + 1)]
+            if first_team is None:
+                resting_team = second_team
+                continue
+            if second_team is None:
+                resting_team = first_team
+                continue
+            matches.append((first_team, second_team))
+
+        cycle_rounds.append({
+            "matches": matches,
+            "resting_team": resting_team,
+        })
+
+        anchor = rotation[0]
+        rotated = [rotation[-1], *rotation[1:-1]]
+        rotation = [anchor, *rotated]
+
+    rounds = []
+    rest_counts = {player: 0 for player in normalized_players}
+    fixed_pair_counts = {pair: expected_pair_target for pair in normalized_pairs}
+
+    round_number = 1
+    for meeting_index in range(meetings):
+        for cycle_round in cycle_rounds:
+            courts = []
+            for first_team, second_team in cycle_round["matches"]:
+                if meeting_index % 2 == 0:
+                    courts.append((first_team, second_team))
+                else:
+                    courts.append((second_team, first_team))
+
+            resting = []
+            if cycle_round["resting_team"] is not None:
+                resting = list(cycle_round["resting_team"])
+                for player in resting:
+                    rest_counts[player] += 1
+
+            rounds.append({
+                "round": round_number,
+                "courts": courts,
+                "resting": sorted(resting),
+            })
+            round_number += 1
+
+    return rounds, rest_counts, fixed_pair_counts, []
+
+
+def find_duplicate_fixed_pair_matchups(rounds, fixed_pairs):
+    """Return duplicate matchup violations for normalized fixed-pair league rounds."""
+    normalized_pairs = {_normalize_pair(pair) for pair in fixed_pairs}
+    if not normalized_pairs:
+        return []
+
+    seen_matchups = {}
+    violations = []
+    for round_data in rounds:
+        for team_a, team_b in round_data.get("courts", []):
+            normalized_team_a = _normalize_pair(team_a)
+            normalized_team_b = _normalize_pair(team_b)
+            if normalized_team_a not in normalized_pairs or normalized_team_b not in normalized_pairs:
+                continue
+
+            matchup_key = tuple(sorted((normalized_team_a, normalized_team_b)))
+            previous_round = seen_matchups.get(matchup_key)
+            if previous_round is not None:
+                violations.append(
+                    f"Duplicate knockout matchup: {_team_label(matchup_key[0])} vs {_team_label(matchup_key[1])} "
+                    f"(rounds {previous_round} and {round_data['round']})"
+                )
+            else:
+                seen_matchups[matchup_key] = round_data["round"]
+
+    return violations

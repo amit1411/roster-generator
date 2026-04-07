@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { generateRoster, revalidateRoster } from "../api";
 import { appCopy } from "../content/uiCopy";
 import {
+  DUPLICATE_KNOCKOUT_VIOLATION_PREFIX,
   PLANNER_STORAGE_KEY,
   createSessionName,
   getLeagueRequestPayload,
@@ -33,6 +34,7 @@ export default function usePlannerState({ directoryPlayers, navigateToPlanner })
   const [plannerStep, setPlannerStep] = useState(1);
   const [sessionDraftName, setSessionDraftName] = useState(createSessionName());
   const [rosterEditLoading, setRosterEditLoading] = useState(false);
+  const [duplicateKnockoutViolations, setDuplicateKnockoutViolations] = useState([]);
 
   const playersById = new Map(directoryPlayers.map((player) => [player.playerId, player]));
   const selectedPlayers = selectedPlayerIds
@@ -82,6 +84,19 @@ export default function usePlannerState({ directoryPlayers, navigateToPlanner })
       setSelectedRosterTarget(null);
     }
   }, [roster]);
+
+  useEffect(() => {
+    const hasRosterFixedPairs = roster && Object.keys(roster.fixed_pair_counts || {}).length > 0;
+    if (!roster || config.draw_type !== "league_knockout" || !hasRosterFixedPairs) {
+      setDuplicateKnockoutViolations([]);
+      return;
+    }
+
+    const duplicateViolations = (roster.violations || []).filter((violation) =>
+      violation.startsWith(DUPLICATE_KNOCKOUT_VIOLATION_PREFIX)
+    );
+    setDuplicateKnockoutViolations(duplicateViolations);
+  }, [config.draw_type, roster]);
 
   useEffect(() => {
     if (isRosterStale) {
@@ -216,6 +231,10 @@ export default function usePlannerState({ directoryPlayers, navigateToPlanner })
     setPlannerError(null);
   }
 
+  function dismissDuplicateKnockoutViolations() {
+    setDuplicateKnockoutViolations([]);
+  }
+
   async function handleRosterPlayerTap(slot) {
     if (!roster || rosterEditLoading || isRosterStale) return;
 
@@ -347,10 +366,12 @@ export default function usePlannerState({ directoryPlayers, navigateToPlanner })
     plannerRosterSignature,
     isRosterStale,
     selectedEditSummary,
+    duplicateKnockoutViolations,
     canContinueFromPlayers,
     canContinueFromSettings,
     handleGenerate,
     clearPlannerError,
+    dismissDuplicateKnockoutViolations,
     clearRosterSelection,
     handleRosterPlayerTap,
     handleRosterTeamTap,

@@ -38,7 +38,13 @@ from database import (
     get_db_session,
     init_db,
 )
-from roster_engine import generate_roster, validate_roster, RosterError
+from roster_engine import (
+    find_duplicate_fixed_pair_matchups,
+    generate_fixed_pair_knockout_roster,
+    generate_roster,
+    validate_roster,
+    RosterError,
+)
 
 app = FastAPI(title="Badminton Roster API")
 
@@ -103,6 +109,7 @@ def _invalidate_player_views():
 class RosterRequest(BaseModel):
     players: list[str]
     fixed_pairs: list[list[str]] = []
+    draw_type: str = "round_robin"
     num_courts: int
     court_numbers: list[str] | None = None
     rounds: int = 9
@@ -149,6 +156,34 @@ class RosterResponse(BaseModel):
 
 class RosterRevalidateRequest(RosterRequest):
     roster: RosterResponse
+
+
+def _has_fixed_pair_knockout_schedule(draw_type: str, fixed_pairs: list[tuple[str, str]]) -> bool:
+    return draw_type == "league_knockout" and len(fixed_pairs) > 0
+
+
+def _collect_roster_violations(
+    rounds: list[dict],
+    limits: dict[str, int],
+    max_consecutive_rest: int,
+    fixed_pairs: list[tuple[str, str]],
+    fixed_pair_counts: dict[tuple[str, str], int],
+    pair_games: int,
+    pair_start_round: int,
+    draw_type: str,
+):
+    violations = validate_roster(
+        rounds,
+        limits,
+        max_consecutive_rest,
+        fixed_pairs,
+        fixed_pair_counts,
+        pair_games,
+        pair_start_round,
+    )
+    if _has_fixed_pair_knockout_schedule(draw_type, fixed_pairs):
+        violations.extend(find_duplicate_fixed_pair_matchups(rounds, fixed_pairs))
+    return violations
 
 
 class DrawConfig(BaseModel):
@@ -1661,6 +1696,7 @@ def _build_roster_response_from_rounds(
     players: list[str],
     court_numbers: list[str],
     fixed_pairs: list[tuple[str, str]],
+    draw_type: str,
     limits: dict[str, int],
     pair_games: int,
     pair_start_round: int,
@@ -1682,7 +1718,7 @@ def _build_roster_response_from_rounds(
                 if pair_key in fixed_pair_counts:
                     fixed_pair_counts[pair_key] += 1
 
-    violations = validate_roster(
+    violations = _collect_roster_violations(
         rounds,
         limits,
         max_consecutive_rest,
@@ -1690,6 +1726,7 @@ def _build_roster_response_from_rounds(
         fixed_pair_counts,
         pair_games,
         pair_start_round,
+        draw_type,
     )
 
     round_results = []
@@ -1790,6 +1827,7 @@ def _normalize_existing_roster(req: RosterRequest, roster: RosterResponse) -> Ro
         players,
         court_numbers,
         fixed_pairs,
+        req.draw_type,
         req.limits,
         req.pair_games,
         req.pair_start_round,
@@ -1812,23 +1850,38 @@ def api_generate(req: RosterRequest):
             court_numbers = [str(i + 1) for i in range(req.num_courts)]
 
         try:
-            rounds, rest_counts, fpc, warnings = generate_roster(
-                players=req.players,
-                num_courts=req.num_courts,
-                num_rounds=req.rounds,
-                consecutive_limits=req.limits,
-                fixed_pairs=fixed_pairs,
-                pair_target=req.pair_games,
-                max_consecutive_rest=req.max_consecutive_rest,
-                pair_start_round=req.pair_start_round,
-                seed=req.seed,
-            )
+            if _has_fixed_pair_knockout_schedule(req.draw_type, fixed_pairs):
+                rounds, rest_counts, fpc, warnings = generate_fixed_pair_knockout_roster(
+                    players=req.players,
+                    fixed_pairs=fixed_pairs,
+                    num_courts=req.num_courts,
+                    num_rounds=req.rounds,
+                    pair_target=req.pair_games,
+                )
+            else:
+                rounds, rest_counts, fpc, warnings = generate_roster(
+                    players=req.players,
+                    num_courts=req.num_courts,
+                    num_rounds=req.rounds,
+                    consecutive_limits=req.limits,
+                    fixed_pairs=fixed_pairs,
+                    pair_target=req.pair_games,
+                    max_consecutive_rest=req.max_consecutive_rest,
+                    pair_start_round=req.pair_start_round,
+                    seed=req.seed,
+                )
         except RosterError as e:
             raise HTTPException(status_code=422, detail=str(e))
 
-        violations = validate_roster(
-            rounds, req.limits, req.max_consecutive_rest,
-            fixed_pairs, fpc, req.pair_games, req.pair_start_round,
+        violations = _collect_roster_violations(
+            rounds,
+            req.limits,
+            req.max_consecutive_rest,
+            fixed_pairs,
+            fpc,
+            req.pair_games,
+            req.pair_start_round,
+            req.draw_type,
         )
 
         round_results = []

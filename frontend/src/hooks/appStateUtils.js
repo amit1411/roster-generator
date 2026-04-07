@@ -7,6 +7,7 @@ export const SESSION_ACCESS_STORAGE_KEY = "badminton-roster:session-access";
 export const ORGANIZER_TOKEN_STORAGE_KEY = "badminton-roster:organizer-token";
 export const SESSION_POLL_INTERVAL_MS = 12000;
 export const ACTIVE_EDIT_GRACE_MS = 15000;
+export const DUPLICATE_KNOCKOUT_VIOLATION_PREFIX = "Duplicate knockout matchup:";
 export const PLAIN_SESSION_WAIT_LABELS = new Set([
   "Ending round...",
   "Re-opening round...",
@@ -115,6 +116,7 @@ export function getLeagueRequestPayload(players, fixedPairs, config) {
   return {
     players,
     fixed_pairs: fixedPairs,
+    draw_type: config.draw_type,
     num_courts: config.num_courts,
     court_numbers: config.court_numbers,
     rounds: config.rounds,
