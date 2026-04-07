@@ -49,9 +49,10 @@ test("players can be created, selected from the planner directory, and used to s
   await navigateToSection(page, "Planner");
 
   const searchInput = page.getByPlaceholder("Search players...");
+  const directorySection = page.locator("section").filter({ has: page.getByRole("heading", { name: "Player Directory" }) });
   for (const player of players) {
     await searchInput.fill(player.shortName);
-    const card = page.locator("section").filter({ has: page.getByText(player.fullName) }).last();
+    const card = directorySection.locator("div.rounded-2xl").filter({ has: page.getByText(player.fullName) }).first();
     await card.getByRole("button", { name: "Add" }).click();
   }
   await searchInput.fill("");
@@ -70,7 +71,7 @@ test("players can be created, selected from the planner directory, and used to s
   await page.getByRole("button", { name: "Start Session" }).click();
   const organizerDialog = page.locator("div.fixed.inset-0").filter({ hasText: "Enter organizer token to start a session" });
   await expect(organizerDialog.getByRole("heading", { name: "Enter organizer token to start a session" })).toBeVisible();
-  await organizerDialog.getByPlaceholder("Enter ADMIN_RECOVERY_TOKEN").fill("thisismytoken");
+  await organizerDialog.getByLabel("Organizer token").fill("thisismytoken");
   await organizerDialog.getByRole("button", { name: "Start Session" }).click();
 
   await expect(page.getByText("Scoring Console")).toBeVisible();

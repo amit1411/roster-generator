@@ -3,10 +3,15 @@ export const appCopy = {
     eyebrow: "Organiser",
     title: "Badminton Session Planner",
   },
+  errors: {
+    bannerTitle: "Something went wrong",
+    dismiss: "Dismiss",
+  },
   renameDialog: {
     eyebrow: "Rename Session",
     title: "Update the session name",
     fieldLabel: "Session name",
+    requiredError: "Session name is required.",
     cancel: "Cancel",
     submit: "Save Name",
     submitLoading: "Saving...",
@@ -26,6 +31,10 @@ export const appCopy = {
     playerSwapInvalid: "Pick another player in the same round to swap.",
     teamSwapInvalid: "Pick another team in the same round to swap.",
     roundSwapInvalid: "Pick another round to swap.",
+    errors: {
+      generateTitle: "Roster could not be generated",
+      actionTitle: "Roster edit issue",
+    },
     selectionHints: {
       player: "Select another player in the same round or tap the same player again to cancel.",
       team: "Select another team in the same round or tap the same team again to cancel.",
@@ -48,6 +57,12 @@ export const appCopy = {
     cancel: "Cancel",
     submit: "Start Session",
     submitLoading: "Checking...",
+  },
+  sessions: {
+    feedback: {
+      copied: "Copied",
+      failed: "Failed",
+    },
   },
 };
 
@@ -110,6 +125,12 @@ export const playerInputCopy = {
 };
 
 export const playersPageCopy = {
+  errors: {
+    directoryTitle: "Could not refresh players",
+    createTitle: "Could not create player",
+    editTitle: "Could not update player",
+    deleteTitle: "Could not delete player",
+  },
   hero: {
     eyebrow: "Players",
     title: "Build a clean player directory once",

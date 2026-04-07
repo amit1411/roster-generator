@@ -101,7 +101,8 @@ function PlayerEditor({ title, submitLabel, draft, setDraft, loading, error, onS
 
         {error ? (
           <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            {error}
+            <p className="font-semibold">{title === playersPageCopy.addPlayer.eyebrow ? playersPageCopy.errors.createTitle : playersPageCopy.errors.editTitle}</p>
+            <p className="mt-1">{error}</p>
           </div>
         ) : null}
 
@@ -152,7 +153,8 @@ function EditPlayerDialog({ player, open, loading, error, draft, setDraft, onCan
 
           {error ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
+              <p className="font-semibold">{playersPageCopy.errors.editTitle}</p>
+              <p className="mt-1">{error}</p>
             </div>
           ) : null}
 
@@ -234,7 +236,8 @@ function DeletePlayerDialog({
 
           {error ? (
             <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
+              <p className="font-semibold">{playersPageCopy.errors.deleteTitle}</p>
+              <p className="mt-1">{error}</p>
             </div>
           ) : null}
         </div>
@@ -265,14 +268,21 @@ function DeletePlayerDialog({
 export default function PlayersPage({
   players,
   loading,
+  directoryError,
   createLoading,
+  createError,
   updateLoading,
+  updateError,
   deleteLoading,
-  error,
+  deleteError,
   onRefresh,
+  onClearDirectoryError,
   onCreatePlayer,
+  onClearCreateError,
   onUpdatePlayer,
+  onClearUpdateError,
   onDeletePlayer,
+  onClearDeleteError,
 }) {
   const [draft, setDraft] = useState({ fullName: "", shortName: "" });
   const [searchQuery, setSearchQuery] = useState("");
@@ -308,6 +318,7 @@ export default function PlayersPage({
   }
 
   function beginEdit(player) {
+    onClearUpdateError?.();
     setEditingPlayerId(player.player_id);
     setEditDraft({
       fullName: player.full_name,
@@ -357,9 +368,12 @@ export default function PlayersPage({
             title={playersPageCopy.addPlayer.eyebrow}
             submitLabel={playersPageCopy.addPlayer.submit}
             draft={draft}
-            setDraft={setDraft}
+            setDraft={(updater) => {
+              onClearCreateError?.();
+              setDraft(updater);
+            }}
             loading={createLoading}
-            error={error}
+            error={createError}
             onSubmit={submitCreate}
           />
         </div>
@@ -389,10 +403,19 @@ export default function PlayersPage({
           </div>
 
           <div className="mt-5 space-y-3 border-t border-gray-100 pt-4">
+            {directoryError ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                <p className="font-semibold">{playersPageCopy.errors.directoryTitle}</p>
+                <p className="mt-1">{directoryError}</p>
+              </div>
+            ) : null}
             <input
               type="search"
               value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
+              onChange={(event) => {
+                onClearDirectoryError?.();
+                setSearchQuery(event.target.value);
+              }}
               placeholder={playersPageCopy.directory.searchPlaceholder}
               className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm focus:border-transparent focus:outline-none focus:ring-2 focus:ring-cyan-500"
             />
@@ -426,6 +449,7 @@ export default function PlayersPage({
                       <button
                         type="button"
                         onClick={() => {
+                          onClearDeleteError?.();
                           setDeletingPlayer(player);
                           setDeleteDraft({ adminToken: "", deleteHistory: false });
                         }}
@@ -455,11 +479,15 @@ export default function PlayersPage({
         player={players.find((player) => player.player_id === editingPlayerId) ?? null}
         open={Boolean(editingPlayerId)}
         loading={updateLoading}
-        error={editingPlayerId ? error : null}
+        error={editingPlayerId ? updateError : null}
         draft={editDraft}
-        setDraft={setEditDraft}
+        setDraft={(updater) => {
+          onClearUpdateError?.();
+          setEditDraft(updater);
+        }}
         onCancel={() => {
           if (updateLoading) return;
+          onClearUpdateError?.();
           setEditingPlayerId(null);
           setEditDraft({ fullName: "", shortName: "" });
         }}
@@ -470,11 +498,15 @@ export default function PlayersPage({
         player={deletingPlayer}
         open={Boolean(deletingPlayer)}
         loading={deleteLoading}
-        error={deletingPlayer ? error : null}
+        error={deletingPlayer ? deleteError : null}
         draft={deleteDraft}
-        setDraft={setDeleteDraft}
+        setDraft={(updater) => {
+          onClearDeleteError?.();
+          setDeleteDraft(updater);
+        }}
         onCancel={() => {
           if (deleteLoading) return;
+          onClearDeleteError?.();
           setDeletingPlayer(null);
           setDeleteDraft({ adminToken: "", deleteHistory: false });
         }}

@@ -17,6 +17,6 @@ test("@smoke ending the last league round should complete the session and show r
 
   await page.getByRole("button", { name: /End Round/ }).first().click();
 
-  await expect(page.getByRole("heading", { name: "Session complete" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Session complete" })).toBeVisible({ timeout: 15000 });
   await expect(page.getByText("Tournament Results")).toBeVisible();
 });

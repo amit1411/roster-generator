@@ -166,9 +166,9 @@ export async function postRoundAction(request, sessionId, editToken, path, paylo
 
 export async function openSession(page, sessionId, editToken = null) {
   const search = new URLSearchParams();
-  search.set("session", sessionId);
   if (editToken) {
     search.set("edit", editToken);
   }
-  await page.goto(`/?${search.toString()}`);
+  const suffix = search.toString() ? `?${search.toString()}` : "";
+  await page.goto(`/sessions/${sessionId}${suffix}`);
 }

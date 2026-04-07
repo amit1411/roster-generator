@@ -10,5 +10,8 @@ export async function navigateToSection(page, label) {
   const mobileMenuButton = page.getByRole("button", { name: "Open navigation" });
   await expect(mobileMenuButton).toBeVisible();
   await mobileMenuButton.click();
-  await page.getByRole("button", { name: label, exact: true }).click();
+  await expect(page.locator("#mobile-global-nav")).toBeVisible();
+  const mobileNavButton = page.getByRole("button", { name: label, exact: true });
+  await expect(mobileNavButton).toBeVisible();
+  await mobileNavButton.click();
 }
