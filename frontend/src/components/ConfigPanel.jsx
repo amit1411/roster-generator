@@ -69,11 +69,14 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
     return (teamCount - 1) * meetings;
   }
 
-  function getDerivedLeagueRounds(meetings = config.league_meetings) {
+  function getDerivedLeagueRounds(meetings = config.league_meetings, numCourts = config.num_courts) {
     const teamCount = getLeagueTeamCount();
     if (teamCount < 2) return 0;
-    const baseRounds = teamCount % 2 === 0 ? teamCount - 1 : teamCount;
-    return baseRounds * meetings;
+    const totalMatches = (teamCount * (teamCount - 1)) / 2;
+    const maxMatchesPerRound = Math.floor(teamCount / 2);
+    const effectiveCourts = Math.min(Math.max(numCourts, 1), maxMatchesPerRound);
+    const roundsPerMeeting = Math.ceil(totalMatches / effectiveCourts);
+    return roundsPerMeeting * meetings;
   }
 
   function updateLeagueFormat(nextValues) {
@@ -81,7 +84,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
       const next = { ...prev, ...nextValues };
       const teamCount = fixedPairs.length;
       if (next.draw_type === "league_knockout" && teamCount >= 2) {
-        next.rounds = getDerivedLeagueRounds(next.league_meetings);
+        next.rounds = getDerivedLeagueRounds(next.league_meetings, next.num_courts);
       }
       if (next.draw_type === "league_knockout") {
         next.pair_start_round = 1;
@@ -334,7 +337,7 @@ export default function ConfigPanel({ config, setConfig, players, fixedPairs }) 
                 ))}
               </div>
               <p className="mt-1.5 text-xs text-gray-400">
-                With {getLeagueTeamCount()} fixed pairs, this becomes {derivedLeagueRounds} league rounds.
+                With {getLeagueTeamCount()} fixed pairs on {config.num_courts} court(s), this becomes {derivedLeagueRounds} league rounds.
               </p>
             </div>
 

@@ -278,53 +278,123 @@ def generate_roster(players, num_courts, num_rounds, consecutive_limits,
     return rounds, rest_counts, fixed_pair_counts, warnings
 
 
-def generate_fixed_pair_knockout_roster(players, fixed_pairs, num_courts, num_rounds, pair_target):
-    """Generate a strict round-robin league schedule for fixed-pair knockout sessions."""
-    normalized_players = sorted(players)
-    normalized_pairs = [_normalize_pair(pair) for pair in fixed_pairs]
+_SLOT_SEARCH_BUDGET = 200_000
+_SLOT_BRANCH_LIMIT = 8
 
-    if not normalized_pairs:
-        raise RosterError("League + knockout scheduling requires at least one fixed pair.")
 
-    pair_players = sorted(player for pair in normalized_pairs for player in pair)
-    if len(pair_players) != len(set(pair_players)):
-        raise RosterError("Each player may appear in at most one fixed pair for league + knockout scheduling.")
-    if pair_players != normalized_players:
-        raise RosterError("League + knockout scheduling requires every selected player to belong to exactly one fixed pair.")
+def _remaining_degrees(matchups):
+    degrees = {}
+    for first, second in matchups:
+        degrees[first] = degrees.get(first, 0) + 1
+        degrees[second] = degrees.get(second, 0) + 1
+    return degrees
 
-    team_count = len(normalized_pairs)
-    if team_count < 2:
-        raise RosterError("Need at least 2 fixed pairs for league + knockout scheduling.")
 
-    teams_with_bye = list(normalized_pairs)
-    if team_count % 2 == 1:
-        teams_with_bye.append(None)
+def _pack_round_robin_slots(matchups, num_courts, initial_resting, require_rest_recovery):
+    """Pack one meeting of round-robin matchups into consecutive time slots.
 
-    base_rounds = len(teams_with_bye) - 1
-    matches_per_round = team_count // 2
+    ``matchups`` lists every (team_a, team_b) index pairing exactly once. Each
+    returned slot holds at most ``num_courts`` mutually disjoint matchups, and
+    slots are filled to capacity while enough matchups remain, so a meeting
+    takes ceil(len(matchups) / num_courts) slots.
 
-    if num_courts != matches_per_round:
-        raise RosterError(
-            f"League + knockout scheduling requires exactly {matches_per_round} court(s) for {team_count} fixed pair(s), "
-            f"but {num_courts} provided."
-        )
-    if num_rounds % base_rounds != 0:
-        raise RosterError(
-            f"League + knockout scheduling requires rounds to be a multiple of {base_rounds} for {team_count} fixed pair(s), "
-            f"but {num_rounds} provided."
-        )
+    With ``require_rest_recovery`` the packer only accepts schedules where every
+    team resting in one slot plays in the next slot (teams resting in the final
+    slot are exempt). ``initial_resting`` applies the same requirement to the
+    first slot for teams that rested in the previous meeting. Candidate slots
+    are explored depth-first, preferring matchups between recovering teams and
+    matchups that keep highly constrained teams available.
 
-    meetings = num_rounds // base_rounds
-    expected_pair_target = (team_count - 1) * meetings
-    if pair_target != expected_pair_target:
-        raise RosterError(
-            f"League + knockout scheduling requires pair_games={expected_pair_target} for {team_count} fixed pair(s) "
-            f"across {meetings} meeting(s), but {pair_target} provided."
-        )
+    Returns the slot list, or None when no schedule is found within the search
+    budget.
+    """
+    team_count = max(max(matchup) for matchup in matchups) + 1
+    all_teams = frozenset(range(team_count))
+    budget = [_SLOT_SEARCH_BUDGET]
 
-    cycle_rounds = []
+    def resting_teams(edges):
+        playing = set()
+        for first, second in edges:
+            playing.add(first)
+            playing.add(second)
+        return all_teams - playing
+
+    def slot_options(remaining, size, must_recover):
+        degrees = _remaining_degrees(remaining)
+
+        def extend(chosen, covered):
+            if len(chosen) == size:
+                if require_rest_recovery and not must_recover <= covered:
+                    return
+                yield tuple(chosen)
+                return
+            if budget[0] <= 0:
+                return
+            budget[0] -= 1
+
+            forced = None
+            if require_rest_recovery:
+                forced = next(
+                    (team for team in sorted(must_recover) if team not in covered),
+                    None,
+                )
+            if forced is not None:
+                options = [
+                    matchup for matchup in remaining
+                    if matchup not in chosen
+                    and forced in matchup
+                    and matchup[0] not in covered
+                    and matchup[1] not in covered
+                ]
+                options.sort(key=lambda matchup: (
+                    0 if matchup[0] in must_recover or matchup[1] in must_recover else 1,
+                    min(degrees[matchup[0]], degrees[matchup[1]]),
+                    matchup,
+                ))
+            else:
+                options = [
+                    matchup for matchup in remaining
+                    if matchup not in chosen
+                    and matchup[0] not in covered
+                    and matchup[1] not in covered
+                ]
+                options.sort(key=lambda matchup: (
+                    -(matchup[0] in must_recover) - (matchup[1] in must_recover),
+                    -(degrees[matchup[0]] + degrees[matchup[1]]),
+                    matchup,
+                ))
+
+            for matchup in options[:_SLOT_BRANCH_LIMIT]:
+                chosen.append(matchup)
+                covered.update(matchup)
+                yield from extend(chosen, covered)
+                covered.difference_update(matchup)
+                chosen.pop()
+
+        yield from extend([], set())
+
+    def search(remaining, last_resting):
+        if not remaining:
+            return []
+        size = min(num_courts, len(remaining))
+        for edges in slot_options(remaining, size, last_resting):
+            next_remaining = [matchup for matchup in remaining if matchup not in edges]
+            child = search(next_remaining, resting_teams(edges))
+            if child is not None:
+                return [list(edges), *child]
+        return None
+
+    return search(list(matchups), frozenset(initial_resting))
+
+
+def _circle_method_rounds(teams_with_bye, round_count):
+    """Return round-robin rounds using the circle method.
+
+    Each round is {"matches": [(team, team)], "resting_team": team | None}.
+    """
     rotation = list(teams_with_bye)
-    for _ in range(base_rounds):
+    cycle_rounds = []
+    for _ in range(round_count):
         matches = []
         resting_team = None
         for index in range(len(rotation) // 2):
@@ -347,32 +417,187 @@ def generate_fixed_pair_knockout_roster(players, fixed_pairs, num_courts, num_ro
         rotated = [rotation[-1], *rotation[1:-1]]
         rotation = [anchor, *rotated]
 
+    return cycle_rounds
+
+
+def _build_league_schedule_rounds(normalized_pairs, num_courts, meetings):
+    """Build league rounds as (matches, resting_pairs, meeting_index) entries.
+
+    With enough courts for a full round-robin round (team_count // 2), every
+    pair plays simultaneously each round. With fewer courts the same matchups
+    are spread across consecutive rounds: each round fills the available courts
+    with disjoint matches and the remaining pairs rest.
+    """
+    team_count = len(normalized_pairs)
+    matches_per_round = team_count // 2
+    schedule_rounds = []
+
+    if num_courts == matches_per_round:
+        teams_with_bye = list(normalized_pairs)
+        if team_count % 2 == 1:
+            teams_with_bye.append(None)
+
+        cycle_rounds = _circle_method_rounds(teams_with_bye, len(teams_with_bye) - 1)
+        for meeting_index in range(meetings):
+            for cycle_round in cycle_rounds:
+                resting_pairs = (
+                    [cycle_round["resting_team"]]
+                    if cycle_round["resting_team"] is not None
+                    else []
+                )
+                schedule_rounds.append({
+                    "matches": cycle_round["matches"],
+                    "resting_pairs": resting_pairs,
+                    "meeting_index": meeting_index,
+                })
+        return schedule_rounds
+
+    carry_resting = frozenset()
+    total_matchups = team_count * (team_count - 1) // 2
+    final_slot_size = total_matchups % num_courts or num_courts
+
+    # Rest recovery needs the pairs resting before the final (possibly smaller)
+    # slot to fit into it. When every slot is full and team_count == 4 * courts,
+    # recovery forces an alternating play/rest parity that never lets half the
+    # pairs meet each other, so it is impossible outright.
+    recovery_possible = (
+        team_count != 4 * num_courts
+        and team_count - 2 * num_courts <= 2 * final_slot_size
+    )
+
+    for meeting_index in range(meetings):
+        matchups = [
+            (first_index, second_index)
+            for first_index in range(team_count)
+            for second_index in range(first_index + 1, team_count)
+        ]
+
+        slots = None
+        if recovery_possible:
+            slots = _pack_round_robin_slots(matchups, num_courts, carry_resting, True)
+            if slots is None and carry_resting:
+                # The boundary carry from the previous meeting may be impossible;
+                # keep back-to-back-rest prevention within this meeting instead.
+                slots = _pack_round_robin_slots(matchups, num_courts, frozenset(), True)
+        if slots is None:
+            slots = _pack_round_robin_slots(matchups, num_courts, carry_resting, False)
+        if slots is None:
+            total_matchups = len(matchups)
+            raise RosterError(
+                f"League + knockout scheduling could not fit {total_matchups} match(es) per meeting "
+                f"onto {num_courts} court(s) for {team_count} fixed pair(s)."
+            )
+
+        for slot in slots:
+            playing = set()
+            for first_index, second_index in slot:
+                playing.add(first_index)
+                playing.add(second_index)
+            resting_pairs = [
+                normalized_pairs[team_index]
+                for team_index in range(team_count)
+                if team_index not in playing
+            ]
+            schedule_rounds.append({
+                "matches": [
+                    (normalized_pairs[first_index], normalized_pairs[second_index])
+                    for first_index, second_index in slot
+                ],
+                "resting_pairs": resting_pairs,
+                "meeting_index": meeting_index,
+            })
+
+        playing_last = set()
+        for first_index, second_index in slots[-1]:
+            playing_last.add(first_index)
+            playing_last.add(second_index)
+        carry_resting = frozenset(
+            team_index for team_index in range(team_count) if team_index not in playing_last
+        )
+
+    return schedule_rounds
+
+
+def generate_fixed_pair_knockout_roster(players, fixed_pairs, num_courts, num_rounds, pair_target):
+    """Generate a round-robin league schedule for fixed-pair knockout sessions.
+
+    Each fixed pair plays as a team. With ``team_count // 2`` courts every pair
+    plays simultaneously each league round; with fewer courts the same matchups
+    are serialized across rounds of at most ``num_courts`` concurrent matches,
+    resting the pairs that do not fit. A round-robin meeting therefore takes
+    ceil(team_count * (team_count - 1) / 2 / num_courts) rounds.
+    """
+    normalized_players = sorted(players)
+    normalized_pairs = [_normalize_pair(pair) for pair in fixed_pairs]
+
+    if not normalized_pairs:
+        raise RosterError("League + knockout scheduling requires at least one fixed pair.")
+
+    pair_players = sorted(player for pair in normalized_pairs for player in pair)
+    if len(pair_players) != len(set(pair_players)):
+        raise RosterError("Each player may appear in at most one fixed pair for league + knockout scheduling.")
+    if pair_players != normalized_players:
+        raise RosterError("League + knockout scheduling requires every selected player to belong to exactly one fixed pair.")
+
+    team_count = len(normalized_pairs)
+    if team_count < 2:
+        raise RosterError("Need at least 2 fixed pairs for league + knockout scheduling.")
+
+    matches_per_round = team_count // 2
+    if num_courts < 1:
+        raise RosterError("League + knockout scheduling requires at least 1 court.")
+    if num_courts > matches_per_round:
+        raise RosterError(
+            f"League + knockout scheduling requires at most {matches_per_round} court(s) for {team_count} fixed pair(s), "
+            f"but {num_courts} provided."
+        )
+
+    total_matchups = team_count * (team_count - 1) // 2
+    rounds_per_meeting = -(-total_matchups // num_courts)
+
+    if num_rounds % rounds_per_meeting != 0:
+        raise RosterError(
+            f"League + knockout scheduling requires rounds to be a multiple of {rounds_per_meeting} for {team_count} fixed pair(s), "
+            f"but {num_rounds} provided."
+        )
+
+    meetings = num_rounds // rounds_per_meeting
+    expected_pair_target = (team_count - 1) * meetings
+    if pair_target != expected_pair_target:
+        raise RosterError(
+            f"League + knockout scheduling requires pair_games={expected_pair_target} for {team_count} fixed pair(s) "
+            f"across {meetings} meeting(s), but {pair_target} provided."
+        )
+
+    schedule_rounds = _build_league_schedule_rounds(normalized_pairs, num_courts, meetings)
+
     rounds = []
     rest_counts = {player: 0 for player in normalized_players}
     fixed_pair_counts = {pair: expected_pair_target for pair in normalized_pairs}
 
     round_number = 1
-    for meeting_index in range(meetings):
-        for cycle_round in cycle_rounds:
-            courts = []
-            for first_team, second_team in cycle_round["matches"]:
-                if meeting_index % 2 == 0:
-                    courts.append((first_team, second_team))
-                else:
-                    courts.append((second_team, first_team))
+    for schedule_round in schedule_rounds:
+        courts = []
+        for first_team, second_team in schedule_round["matches"]:
+            if schedule_round["meeting_index"] % 2 == 0:
+                courts.append((first_team, second_team))
+            else:
+                courts.append((second_team, first_team))
 
-            resting = []
-            if cycle_round["resting_team"] is not None:
-                resting = list(cycle_round["resting_team"])
-                for player in resting:
-                    rest_counts[player] += 1
+        resting = sorted(
+            player
+            for resting_pair in schedule_round["resting_pairs"]
+            for player in resting_pair
+        )
+        for player in resting:
+            rest_counts[player] += 1
 
-            rounds.append({
-                "round": round_number,
-                "courts": courts,
-                "resting": sorted(resting),
-            })
-            round_number += 1
+        rounds.append({
+            "round": round_number,
+            "courts": courts,
+            "resting": resting,
+        })
+        round_number += 1
 
     return rounds, rest_counts, fixed_pair_counts, []
 

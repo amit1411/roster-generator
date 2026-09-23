@@ -1756,6 +1756,7 @@ def _normalize_existing_roster(req: RosterRequest, roster: RosterResponse) -> Ro
     players = list(req.players)
     players_set = set(players)
     fixed_pairs = [tuple(sorted(pair)) for pair in req.fixed_pairs]
+    is_knockout_league = _has_fixed_pair_knockout_schedule(req.draw_type, fixed_pairs)
 
     court_numbers = req.court_numbers
     if not court_numbers or len(court_numbers) != req.num_courts:
@@ -1783,10 +1784,19 @@ def _normalize_existing_roster(req: RosterRequest, roster: RosterResponse) -> Ro
     for expected_round_number, round_result in enumerate(roster.rounds, start=1):
         if round_result.round != expected_round_number:
             raise HTTPException(status_code=422, detail="Edited roster contains invalid round numbering")
-        if len(round_result.courts) != req.num_courts:
+        if is_knockout_league:
+            # Serialized league rounds may use fewer courts when a meeting's
+            # matches do not divide evenly across the available courts.
+            if not 1 <= len(round_result.courts) <= req.num_courts:
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"Round {round_result.round} must contain 1 to {req.num_courts} courts",
+                )
+        elif len(round_result.courts) != req.num_courts:
             raise HTTPException(status_code=422, detail=f"Round {round_result.round} must contain exactly {req.num_courts} courts")
-        if len(round_result.resting) != num_resting:
-            raise HTTPException(status_code=422, detail=f"Round {round_result.round} must contain exactly {num_resting} resting players")
+        expected_resting = len(players) - 4 * len(round_result.courts)
+        if len(round_result.resting) != expected_resting:
+            raise HTTPException(status_code=422, detail=f"Round {round_result.round} must contain exactly {expected_resting} resting players")
 
         seen_players: list[str] = []
         normalized_courts: list[tuple[tuple[str, str], tuple[str, str]]] = []
@@ -1937,6 +1947,7 @@ def create_shared_session(req: SharedSessionCreateRequest):
         RosterRequest(
             players=inferred_players,
             fixed_pairs=req.fixed_pairs,
+            draw_type=req.draw_config.draw_type,
             num_courts=len(req.roster.court_numbers),
             court_numbers=req.roster.court_numbers,
             rounds=len(req.roster.rounds),
